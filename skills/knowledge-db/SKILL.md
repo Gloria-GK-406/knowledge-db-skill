@@ -64,7 +64,7 @@ All commands support:
 
 | Option | Meaning |
 |---|---|
-| `--kb PATH` | Knowledge base root. Defaults to `.kb`. Use this when the database is outside the current working directory. |
+| `--kb PATH` | Knowledge base root. Defaults to `.kb`. It may appear before the command, after the command, or between command options. Use this when the database is outside the current working directory. |
 
 ### Creation and Reading Commands
 

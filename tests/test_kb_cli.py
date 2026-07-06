@@ -81,6 +81,34 @@ class KbCliTests(unittest.TestCase):
             self.assertTrue((root / "info").is_dir())
             self.assertTrue((root / "knowledge").is_dir())
 
+    def test_global_kb_option_can_appear_after_command_or_between_args(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "custom-kb"
+            self.run_kb(tmp, "init", "--kb", str(root))
+            self.assertTrue((root / "source").is_dir())
+
+            source = root / "source" / "manual.md"
+            source.write_text("raw source", encoding="utf-8")
+            self.run_kb(
+                tmp,
+                "new-info",
+                "manual/unordered",
+                "--title",
+                "Unordered Args",
+                "--kb",
+                str(root),
+                "--source",
+                "source/manual.md",
+                "--tag",
+                "args",
+            )
+
+            list_result = self.run_kb(tmp, "list", "--kb", str(root), "info")
+            self.assertIn("info/manual/unordered.md - Unordered Args", list_result.stdout)
+
+            scan_result = self.run_kb(tmp, f"--kb={root}", "scan")
+            self.assertIn("OK", scan_result.stdout)
+
     def test_new_entries_list_tree_search_and_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")

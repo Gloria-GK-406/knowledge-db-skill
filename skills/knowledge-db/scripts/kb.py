@@ -704,9 +704,34 @@ def build_parser():
     return parser
 
 
+def extract_global_kb(argv):
+    remaining = []
+    kb = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--kb":
+            if index + 1 >= len(argv):
+                raise SystemExit("--kb requires a value.")
+            kb = argv[index + 1]
+            index += 2
+            continue
+        if arg.startswith("--kb="):
+            kb = arg.split("=", 1)[1]
+            index += 1
+            continue
+        remaining.append(arg)
+        index += 1
+    return kb, remaining
+
+
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    kb, argv = extract_global_kb(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
+    if kb is not None:
+        args.kb = kb
     return args.func(args)
 
 
