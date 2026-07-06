@@ -6,6 +6,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+try {
+    [Console]::InputEncoding = $utf8NoBom
+    [Console]::OutputEncoding = $utf8NoBom
+} catch {
+    # Some non-interactive hosts do not expose a mutable console.
+}
+$OutputEncoding = $utf8NoBom
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pythonScript = Join-Path $scriptDir "kb.py"
 

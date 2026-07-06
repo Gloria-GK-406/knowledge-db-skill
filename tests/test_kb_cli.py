@@ -72,6 +72,21 @@ class KbCliTests(unittest.TestCase):
             )
         return result
 
+    def run_script_bytes(self, command, cwd, *args, env=None, check=True):
+        result = subprocess.run(
+            [*command, *args],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+        )
+        if check and result.returncode != 0:
+            self.fail(
+                f"{' '.join(str(part) for part in command + list(args))} failed\n"
+                f"stdout:\n{result.stdout!r}\n"
+                f"stderr:\n{result.stderr!r}"
+            )
+        return result
+
     def test_init_creates_kb_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
@@ -414,6 +429,45 @@ class KbCliTests(unittest.TestCase):
 
             result = self.run_script(command, tmp, "list", "info", env=env)
             self.assertIn("info/manual/from-powershell.md - Info From PowerShell", result.stdout)
+
+    def test_powershell_wrapper_forces_utf8_for_python_output(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if powershell is None:
+            self.skipTest("PowerShell is not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.copy()
+            env["KB_PYTHON"] = sys.executable
+            env["PYTHONIOENCODING"] = "cp936"
+            env["PYTHONUTF8"] = "0"
+            command = [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(KB_PS1),
+            ]
+
+            self.run_script_bytes(command, tmp, "init", env=env)
+            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source.write_text("raw source", encoding="utf-8")
+            self.run_script_bytes(
+                command,
+                tmp,
+                "new-info",
+                "manual/utf8",
+                "--title",
+                "中文标题",
+                "--source",
+                "source/manual.md",
+                "--tag",
+                "utf8",
+                env=env,
+            )
+
+            result = self.run_script_bytes(command, tmp, "list", "info", env=env)
+            stdout = result.stdout.decode("utf-8")
+            self.assertIn("info/manual/utf8.md - 中文标题", stdout)
 
     def test_sh_wrapper_forwards_to_kb_py(self):
         shell = find_sh_shell()

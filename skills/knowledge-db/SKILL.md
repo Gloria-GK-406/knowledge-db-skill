@@ -41,6 +41,8 @@ From PowerShell:
 .\scripts\kb.ps1 <command>
 ```
 
+Prefer `kb.ps1` on Windows when entries may contain Chinese or other non-ASCII text; it forces PowerShell and the Python child process to use UTF-8 output.
+
 From sh/bash:
 
 ```bash
