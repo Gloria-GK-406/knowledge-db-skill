@@ -379,6 +379,36 @@ class KbCliTests(unittest.TestCase):
             self.assertNotIn("## J91 Follow Up Template", section.stdout)
             self.assertNotIn("J91 should not be included", section.stdout)
 
+    def test_read_and_search_accept_utf8_sig_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_kb(tmp, "init")
+            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source.write_text("raw source", encoding="utf-8")
+            entry = Path(tmp) / ".kb" / "info" / "manual" / "bom.md"
+            entry.parent.mkdir(parents=True)
+            entry.write_text(
+                "\ufeff---\n"
+                "kind: info\n"
+                "title: BOM Info\n"
+                "source:\n"
+                "  - source/manual.md\n"
+                "created: 2026-07-06\n"
+                "updated: 2026-07-06\n"
+                "tags:\n"
+                "  - bom\n"
+                "---\n\n"
+                "# BOM Info\n\n"
+                "needle appears here\n",
+                encoding="utf-8",
+            )
+
+            read_result = self.run_kb(tmp, "read", "info/manual/bom.md", "--head", "3")
+            self.assertIn("kind: info", read_result.stdout)
+
+            search_result = self.run_kb(tmp, "search", "needle", "--kind", "info", "--context", "0")
+            self.assertIn("info/manual/bom.md - BOM Info", search_result.stdout)
+            self.assertIn("needle appears here", search_result.stdout)
+
     def test_enhanced_search_all_any_tags_and_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
@@ -540,6 +570,34 @@ class KbCliTests(unittest.TestCase):
             result = self.run_script_bytes(command, tmp, "list", "info", env=env)
             stdout = result.stdout.decode("utf-8")
             self.assertIn("info/manual/utf8.md - 中文标题", stdout)
+
+    def test_powershell_wrapper_skips_unusable_python_candidate(self):
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if powershell is None:
+            self.skipTest("PowerShell is not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "python.cmd").write_text("@echo off\r\nexit /b 88\r\n", encoding="utf-8")
+            (bin_dir / "python3.cmd").write_text(
+                f'@echo off\r\n"{sys.executable}" %*\r\n',
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.pop("KB_PYTHON", None)
+            env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+            command = [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(KB_PS1),
+            ]
+
+            result = self.run_script(command, tmp, "init", env=env)
+            self.assertIn("Initialized", result.stdout)
+            self.assertTrue((Path(tmp) / ".kb" / "source").is_dir())
 
     def test_sh_wrapper_forwards_to_kb_py(self):
         shell = find_sh_shell()

@@ -25,6 +25,20 @@ if (-not (Test-Path -LiteralPath $pythonScript)) {
     exit 127
 }
 
+function Test-KbPython {
+    param(
+        [string]$Command,
+        [string[]]$PrefixArgs = @()
+    )
+
+    try {
+        & $Command @PrefixArgs -c "import sys; raise SystemExit(0 if sys.version_info[0] == 3 else 1)" *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
 function Invoke-KbPython {
     param(
         [string]$Command,
@@ -36,21 +50,25 @@ function Invoke-KbPython {
 }
 
 if ($env:KB_PYTHON) {
-    Invoke-KbPython -Command $env:KB_PYTHON
+    if (Test-KbPython -Command $env:KB_PYTHON) {
+        Invoke-KbPython -Command $env:KB_PYTHON
+    }
+    Write-Error "KB_PYTHON is not a usable Python 3 interpreter: $env:KB_PYTHON"
+    exit 127
 }
 
 $python = Get-Command python -ErrorAction SilentlyContinue
-if ($python) {
+if ($python -and (Test-KbPython -Command $python.Source)) {
     Invoke-KbPython -Command $python.Source
 }
 
 $python3 = Get-Command python3 -ErrorAction SilentlyContinue
-if ($python3) {
+if ($python3 -and (Test-KbPython -Command $python3.Source)) {
     Invoke-KbPython -Command $python3.Source
 }
 
 $py = Get-Command py -ErrorAction SilentlyContinue
-if ($py) {
+if ($py -and (Test-KbPython -Command $py.Source -PrefixArgs @("-3"))) {
     Invoke-KbPython -Command $py.Source -PrefixArgs @("-3")
 }
 

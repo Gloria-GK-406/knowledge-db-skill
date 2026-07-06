@@ -41,7 +41,7 @@ From PowerShell:
 .\scripts\kb.ps1 <command>
 ```
 
-Prefer `kb.ps1` on Windows when entries may contain Chinese or other non-ASCII text; it forces PowerShell and the Python child process to use UTF-8 output.
+Prefer `kb.ps1` on Windows when entries may contain Chinese or other non-ASCII text; it forces PowerShell and the Python child process to use UTF-8 output, validates Python candidates, and skips unusable launchers such as Microsoft Store shims.
 
 From sh/bash:
 
@@ -104,7 +104,7 @@ Use `read` to inspect an entry before relying on it or updating it.
 |---|---|
 | `--meta-only` | Print only YAML frontmatter. |
 | `--body-only` | Print only Markdown body. |
-| `--head N` | Print only the first N lines. |
+| `--head N` | Print only the first N lines. Can combine with `--line` or `--section` to truncate focused reads. |
 | `--line N` | Print file line N. Use with `--context M` to include nearby lines. |
 | `--context M` | With `--line`, print M lines before and after the target line. |
 | `--section TEXT` | Print the Markdown section whose heading contains TEXT, ending before the next same-or-higher-level heading. |

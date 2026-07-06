@@ -50,6 +50,10 @@ def split_frontmatter(text):
     return None, text
 
 
+def read_utf8_text(path):
+    return path.read_text(encoding="utf-8-sig")
+
+
 def compose_frontmatter(metadata):
     lines = ["---"]
     for key, value in metadata.items():
@@ -96,10 +100,7 @@ def parse_simple_yaml(yaml_text):
 
 
 def read_entry(path):
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        text = path.read_text(encoding="utf-8-sig")
+    text = read_utf8_text(path)
     yaml_text, body = split_frontmatter(text)
     if yaml_text is None:
         return {}, body, "missing YAML frontmatter"
@@ -159,7 +160,7 @@ def read_body_arg(args):
     if args.body is not None:
         return args.body
     if args.body_file is not None:
-        return Path(args.body_file).read_text(encoding="utf-8")
+        return read_utf8_text(Path(args.body_file))
     if args.body_stdin:
         return sys.stdin.read()
     return None
@@ -292,7 +293,7 @@ def cmd_read(args):
     if not path.exists() or not path.is_file():
         print(f"Path not found: {display_path(root, path)}", file=sys.stderr)
         return 2
-    text = path.read_text(encoding="utf-8")
+    text = read_utf8_text(path)
     yaml_text, body = split_frontmatter(text)
     if args.meta_only and args.body_only:
         print("Use only one of --meta-only or --body-only.", file=sys.stderr)
@@ -427,7 +428,7 @@ def cmd_search(args):
         if all_match and any_match:
             matches += 1
             print(f"{display_path(root, path)} - {data.get('title', '(untitled)')}")
-            context_text = path.read_text(encoding="utf-8")
+            context_text = read_utf8_text(path)
             for snippet in search_text_for_context(context_text, all_terms + any_terms, args.context):
                 print(snippet)
     if matches == 0:
@@ -732,7 +733,7 @@ def build_parser():
     read.add_argument("path")
     read.add_argument("--meta-only", action="store_true")
     read.add_argument("--body-only", action="store_true")
-    read.add_argument("--head", type=int, help="Print only the first N lines.")
+    read.add_argument("--head", type=int, help="Print only the first N lines; can combine with --line or --section.")
     read.add_argument("--line", type=int, help="Print a specific file line with optional context.")
     read.add_argument("--context", type=int, default=0, help="With --line, print N lines before and after the target line.")
     read.add_argument("--section", help="Print the Markdown section whose heading contains this text.")
