@@ -147,6 +147,16 @@ Use this when the `.kb/` structure is missing, incomplete, or being set up for t
 4. Create derived conclusions or procedures with `new-knowledge` only after the supporting info exists.
 5. Run `scan` and fix reported metadata, path, or dependency problems.
 
+### Generating Knowledge From Material
+
+Use this when the user asks you to create knowledge from files, web pages, notes, documents, spreadsheets, or other supplied material. Do not jump directly from raw material to `knowledge`.
+
+1. Record the source first. If the material is a file, copy or place it under `.kb/source/`. If it is a web page, keep the exact URL as the source reference.
+2. Inspect the source and create the `info` entries needed to support the target knowledge. Each info entry should extract, clean, group, or summarize source content, and must include `--source`.
+3. Read the created info entries and derive the knowledge only from those info entries.
+4. Create the knowledge entry with `new-knowledge`, repeating `--depends-on INFO` for every supporting info file.
+5. Run `trace` on the knowledge entry to confirm `knowledge -> info -> source`, then run `scan`.
+
 ### Turning Source Into Info
 
 Use this when the user provides or points to raw material such as a spreadsheet, PDF, document, web export, log, transcript, or notes.
