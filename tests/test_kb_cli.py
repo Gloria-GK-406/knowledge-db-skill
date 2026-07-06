@@ -4,6 +4,8 @@ import tempfile
 import unittest
 import os
 import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -147,6 +149,81 @@ class KbCliTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("missing dependency", result.stdout.lower())
             self.assertIn("info/nope.md", result.stdout)
+
+    def test_scan_accepts_accessible_web_source_and_warns_on_unreachable_url(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"web source")
+
+            def log_message(self, _format, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                self.run_kb(tmp, "init")
+                url = f"http://127.0.0.1:{server.server_port}/docs/page?version=1#section"
+                self.run_kb(
+                    tmp,
+                    "new-info",
+                    "web/access",
+                    "--title",
+                    "Web Source Info",
+                    "--source",
+                    url,
+                    "--tag",
+                    "web",
+                    "--body",
+                    "Collected from a web page.",
+                )
+
+                scan = self.run_kb(tmp, "scan")
+                self.assertIn("OK", scan.stdout)
+
+                self.run_kb(
+                    tmp,
+                    "new-knowledge",
+                    "web/derived",
+                    "--title",
+                    "Derived From Web",
+                    "--depends-on",
+                    "info/web/access.md",
+                    "--tag",
+                    "web",
+                )
+                impact = self.run_kb(tmp, "impact", url)
+                self.assertIn("info/web/access.md - Web Source Info", impact.stdout)
+                self.assertIn("knowledge/web/derived.md - Derived From Web", impact.stdout)
+
+                self.run_kb(
+                    tmp,
+                    "new-info",
+                    "web/missing",
+                    "--title",
+                    "Missing Web Source",
+                    "--source",
+                    "http://127.0.0.1:1/not-there",
+                    "--tag",
+                    "web",
+                    "--force",
+                )
+
+                missing = self.run_kb(tmp, "scan", check=False)
+                self.assertEqual(missing.returncode, 0)
+                self.assertIn("source URL not accessible", missing.stdout)
+                self.assertIn("http://127.0.0.1:1/not-there", missing.stdout)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
 
     def test_create_with_body_file_and_read_modes(self):
         with tempfile.TemporaryDirectory() as tmp:

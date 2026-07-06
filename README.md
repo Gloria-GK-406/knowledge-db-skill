@@ -2,7 +2,7 @@
 
 Local Markdown knowledge-base skill for Codex. It organizes a small knowledge base into three layers:
 
-- `source/`: raw external material
+- `source/`: raw external material stored as files; web pages can also be referenced directly by URL from info entries
 - `info/`: organized information extracted from source material
 - `knowledge/`: conclusions, procedures, and reusable understanding derived from info
 
@@ -28,6 +28,8 @@ python skills/knowledge-db/scripts/kb.py init
 python skills/knowledge-db/scripts/kb.py tree --files --titles
 python skills/knowledge-db/scripts/kb.py scan
 ```
+
+`scan` checks local source file existence, web source reachability, and knowledge dependencies.
 
 PowerShell:
 

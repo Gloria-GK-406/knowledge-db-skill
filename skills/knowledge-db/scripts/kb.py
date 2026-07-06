@@ -4,6 +4,9 @@ import re
 import sys
 from datetime import date
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urldefrag, urlsplit
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 
 KB_DIRS = ("source", "info", "knowledge")
@@ -374,9 +377,57 @@ def cmd_search(args):
     return 0
 
 
-def source_exists(root, source):
-    base = source.split("#", 1)[0]
-    return (root / base).exists()
+def is_web_source(source):
+    return urlsplit(source).scheme in ("http", "https")
+
+
+def source_reference_base(source):
+    if is_web_source(source):
+        return urldefrag(source)[0]
+    return source.split("#", 1)[0].replace("\\", "/")
+
+
+def web_source_accessible(source, timeout):
+    url = source_reference_base(source)
+    last_error = None
+    opener = build_opener(ProxyHandler({})) if should_bypass_proxy(url) else None
+    for method in ("HEAD", "GET"):
+        headers = {"User-Agent": "knowledge-db-skill/0.1"}
+        if method == "GET":
+            headers["Range"] = "bytes=0-0"
+        request = Request(url, headers=headers, method=method)
+        try:
+            open_request = opener.open if opener else urlopen
+            with open_request(request, timeout=timeout) as response:
+                status = getattr(response, "status", 200)
+                if 200 <= status < 400:
+                    return True, None
+                last_error = f"HTTP {status}"
+        except HTTPError as exc:
+            last_error = f"HTTP {exc.code}"
+            if method == "HEAD" and exc.code in (403, 405, 501):
+                continue
+            return False, last_error
+        except (OSError, TimeoutError, URLError) as exc:
+            last_error = str(getattr(exc, "reason", exc))
+            if method == "HEAD":
+                continue
+            return False, last_error
+    return False, last_error or "not accessible"
+
+
+def should_bypass_proxy(url):
+    host = (urlsplit(url).hostname or "").lower()
+    return host == "localhost" or host == "::1" or host.startswith("127.")
+
+
+def source_available(root, source, web_timeout):
+    if is_web_source(source):
+        return web_source_accessible(source, web_timeout)
+    base = source_reference_base(source)
+    if (root / base).exists():
+        return True, None
+    return False, None
 
 
 def cmd_scan(args):
@@ -402,8 +453,13 @@ def cmd_scan(args):
             if isinstance(sources, str):
                 sources = [sources]
             for source in sources:
-                if not source_exists(root, source):
-                    problems.append(("WARN", f"{rel}: source not found: {source}"))
+                available, detail = source_available(root, source, args.web_timeout)
+                if not available:
+                    if is_web_source(source):
+                        suffix = f" ({detail})" if detail else ""
+                        problems.append(("WARN", f"{rel}: source URL not accessible: {source}{suffix}"))
+                    else:
+                        problems.append(("WARN", f"{rel}: source not found: {source}"))
         if kind == "knowledge":
             deps = data.get("depends_on", [])
             if isinstance(deps, str):
@@ -474,14 +530,14 @@ def cmd_trace(args):
 
 
 def info_entries_for_source(root, source_target):
-    target_base = source_target.split("#", 1)[0].replace("\\", "/")
+    target_base = source_reference_base(source_target)
     matches = []
     for _kind, path in iter_entries(root, "info"):
         data, _body, error = read_entry(path)
         if error:
             continue
         for source in list_value(data.get("source")):
-            source_base = source.split("#", 1)[0].replace("\\", "/")
+            source_base = source_reference_base(source)
             if source_base == target_base:
                 matches.append(path)
                 break
@@ -507,7 +563,7 @@ def cmd_impact(args):
     target_path = resolve_existing_path(root, target)
     affected_info = []
     affected_knowledge = []
-    if target.startswith("source/"):
+    if target.startswith("source/") or is_web_source(target):
         affected_info = info_entries_for_source(root, target)
         info_rels = [display_path(root, path) for path in affected_info]
         affected_knowledge = knowledge_entries_for_info(root, info_rels)
@@ -517,7 +573,7 @@ def cmd_impact(args):
         info_rel = display_path(root, target_path)
         affected_knowledge = knowledge_entries_for_info(root, [info_rel])
     else:
-        print("Impact target must be an info path or source path.", file=sys.stderr)
+        print("Impact target must be an info path, source path, or source URL.", file=sys.stderr)
         return 2
 
     if affected_info:
@@ -632,6 +688,7 @@ def build_parser():
     search.set_defaults(func=cmd_search)
 
     scan = sub.add_parser("scan", help="Validate metadata and references.")
+    scan.add_argument("--web-timeout", type=float, default=5.0, help="Seconds to wait when checking web sources. Default: 5.")
     scan.set_defaults(func=cmd_scan)
 
     trace = sub.add_parser("trace", help="Trace a knowledge entry to its info dependencies and sources.")

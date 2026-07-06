@@ -11,14 +11,14 @@ Use this skill to work with a local Markdown knowledge base rooted at `.kb/`. Th
 
 ```text
 .kb/
-  source/      raw external material
+  source/      raw external material stored as files
   info/        organized information extracted from source
   knowledge/   derived knowledge based on info
 ```
 
 Keep the layer boundary strict:
 
-- Put external files or raw captures under `source/`.
+- Put external files or raw captures under `source/`, or reference a web page directly with an `http://` or `https://` URL in info metadata.
 - Create `info` when content extracts, cleans, groups, or summarizes source material.
 - Create `knowledge` when content makes a conclusion, procedure, rule, recommendation, or reusable explanation from one or more info files.
 - Treat dependent `knowledge` as suspect when an `info` entry is wrong or outdated.
@@ -79,7 +79,7 @@ Use `new-info` when the target entry belongs under `.kb/info/`.
 
 | Option | Meaning |
 |---|---|
-| `--source SOURCE` | Repeatable. Source path, optionally with a locator after `#`. Include exact source paths whenever possible. |
+| `--source SOURCE` | Repeatable. Local source path or web URL. Local paths may use a locator after `#`; web URLs may include query strings and fragments. |
 | `--tag TAG` | Repeatable metadata tag. |
 | `--body TEXT` | Write Markdown body at creation time. |
 | `--body-file FILE` | Read Markdown body from a UTF-8 file. |
@@ -126,12 +126,12 @@ Use `search --context N` when keyword matches need surrounding lines. Use `--all
 
 | Command | Purpose |
 |---|---|
-| `scan` | Validate metadata, source paths, and knowledge dependencies. |
+| `scan` | Validate metadata, local source paths, web source accessibility, and knowledge dependencies. |
 | `trace PATH` | Show `knowledge -> info -> source`, or `info -> source`. |
 | `impact PATH` | Find info/knowledge affected by an info or source path. |
 | `stale` | Find knowledge whose info dependencies are newer than the knowledge. |
 
-Run `scan` after creating or editing entries. Use `trace` before relying on a knowledge entry. Use `impact` when source or info changes. Use `stale` to find knowledge that may need review.
+Run `scan` after creating or editing entries. It checks local source files for existence, web sources for reachability, and `knowledge.depends_on` paths for missing info dependencies. Use `scan --web-timeout N` to adjust URL check timeout seconds. Use `trace` before relying on a knowledge entry. Use `impact` when source or info changes; source may be a local source path or web URL. Use `stale` to find knowledge that may need review.
 
 ## 3. When and How To Use It
 
@@ -140,7 +140,7 @@ Run `scan` after creating or editing entries. Use `trace` before relying on a kn
 Use this when the `.kb/` structure is missing, incomplete, or being set up for the first time.
 
 1. Run `init`.
-2. Put raw external material under `.kb/source/`.
+2. Put raw external material under `.kb/source/`, or keep a web page as an exact URL source reference.
 3. Create organized facts or summaries with `new-info`.
 4. Create derived conclusions or procedures with `new-knowledge` only after the supporting info exists.
 5. Run `scan` and fix reported metadata, path, or dependency problems.
@@ -149,11 +149,11 @@ Use this when the `.kb/` structure is missing, incomplete, or being set up for t
 
 Use this when the user provides or points to raw material such as a spreadsheet, PDF, document, web export, log, transcript, or notes.
 
-1. Copy or place the raw material under `.kb/source/`.
+1. Copy or place file-based raw material under `.kb/source/`; for web pages, keep the exact URL as the source.
 2. Inspect the source with appropriate tools.
 3. Choose info granularity by topic, source section, or reusable fact group.
 4. Create each info entry with `new-info`.
-5. Pass exact source paths through repeatable `--source`; include locators after `#` when useful.
+5. Pass exact local source paths or web URLs through repeatable `--source`; include locators or URL fragments when useful.
 6. Run `scan`.
 7. Use `tree info --files --titles` to review what was created.
 
