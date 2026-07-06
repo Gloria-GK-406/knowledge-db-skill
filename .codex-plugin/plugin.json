@@ -1,0 +1,10 @@
+{
+  "name": "knowledge-db-skill",
+  "version": "0.1.0",
+  "description": "Local Markdown knowledge base skill with source, info, and knowledge layers plus traversal scripts.",
+  "homepage": "https://github.com/OWNER/knowledge-db-skill",
+  "repository": "https://github.com/OWNER/knowledge-db-skill",
+  "license": "MIT",
+  "keywords": ["knowledge-base", "markdown", "provenance", "skills", "agent-skills", "codex"],
+  "skills": "./skills/"
+}

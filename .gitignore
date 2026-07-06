@@ -1,0 +1,13 @@
+# Local knowledge base instances and scratch data
+.kb/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Test / cache
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
