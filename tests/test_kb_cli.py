@@ -307,6 +307,78 @@ class KbCliTests(unittest.TestCase):
             self.assertIn("title: Alpha Info", read_meta.stdout)
             self.assertNotIn("Alpha beta gamma.", read_meta.stdout)
 
+    def test_read_line_context_and_markdown_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_kb(tmp, "init")
+            source = Path(tmp) / ".kb" / "source" / "templates.md"
+            source.write_text("raw source", encoding="utf-8")
+            body = Path(tmp) / "templates-body.md"
+            body.write_text(
+                "\n".join(
+                    [
+                        "# Expert Configuration Templates",
+                        "",
+                        "## J80 Basic Template",
+                        "basic template line",
+                        "",
+                        "## J90 Expert Template",
+                        "J90 overview line",
+                        "business catalog assignment for J90",
+                        "J90 closing line",
+                        "### J90 Details",
+                        "nested detail stays in J90",
+                        "",
+                        "## J91 Follow Up Template",
+                        "J91 should not be included",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.run_kb(
+                tmp,
+                "new-info",
+                "manual/templates",
+                "--title",
+                "Template Info",
+                "--source",
+                "source/templates.md",
+                "--tag",
+                "template",
+                "--body-file",
+                str(body),
+            )
+
+            entry = Path(tmp) / ".kb" / "info" / "manual" / "templates.md"
+            target_line = next(
+                index
+                for index, line in enumerate(entry.read_text(encoding="utf-8").splitlines(), start=1)
+                if "business catalog assignment" in line
+            )
+
+            search = self.run_kb(tmp, "search", "business catalog", "--kind", "info", "--context", "0")
+            self.assertIn(f"  {target_line}: business catalog assignment for J90", search.stdout)
+
+            line_read = self.run_kb(
+                tmp,
+                "read",
+                "info/manual/templates.md",
+                "--line",
+                str(target_line),
+                "--context",
+                "1",
+            )
+            self.assertIn(f"{target_line - 1}: J90 overview line", line_read.stdout)
+            self.assertIn(f"{target_line}: business catalog assignment for J90", line_read.stdout)
+            self.assertIn(f"{target_line + 1}: J90 closing line", line_read.stdout)
+            self.assertNotIn("J91 should not be included", line_read.stdout)
+
+            section = self.run_kb(tmp, "read", "info/manual/templates.md", "--section", "J90")
+            self.assertIn("## J90 Expert Template", section.stdout)
+            self.assertIn("nested detail stays in J90", section.stdout)
+            self.assertNotIn("## J91 Follow Up Template", section.stdout)
+            self.assertNotIn("J91 should not be included", section.stdout)
+
     def test_enhanced_search_all_any_tags_and_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")

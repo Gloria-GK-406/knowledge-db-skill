@@ -105,6 +105,9 @@ Use `read` to inspect an entry before relying on it or updating it.
 | `--meta-only` | Print only YAML frontmatter. |
 | `--body-only` | Print only Markdown body. |
 | `--head N` | Print only the first N lines. |
+| `--line N` | Print file line N. Use with `--context M` to include nearby lines. |
+| `--context M` | With `--line`, print M lines before and after the target line. |
+| `--section TEXT` | Print the Markdown section whose heading contains TEXT, ending before the next same-or-higher-level heading. |
 
 ### Browsing and Search Commands
 
@@ -122,7 +125,7 @@ Use `read` to inspect an entry before relying on it or updating it.
 
 Use `tree --files --titles` when you need to scan the knowledge base by path and title before opening files.
 
-Use `search --context N` when keyword matches need surrounding lines. Use `--all a,b` for terms that must all appear, and `--any a,b` for acceptable alternatives.
+Use `search --context N` when keyword matches need surrounding lines. Search context line numbers are real file line numbers, so they can be passed directly to `read PATH --line N --context M`. Use `--all a,b` for terms that must all appear, and `--any a,b` for acceptable alternatives.
 
 ### Validation and Trace Commands
 

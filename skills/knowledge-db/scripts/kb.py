@@ -297,10 +297,25 @@ def cmd_read(args):
     if args.meta_only and args.body_only:
         print("Use only one of --meta-only or --body-only.", file=sys.stderr)
         return 2
+    focused_modes = [args.meta_only, args.body_only, args.line is not None, args.section is not None]
+    if sum(1 for enabled in focused_modes if enabled) > 1:
+        print("Use only one focused read mode: --meta-only, --body-only, --line, or --section.", file=sys.stderr)
+        return 2
     if args.meta_only:
         output = f"---\n{yaml_text or ''}\n---\n"
     elif args.body_only:
         output = body
+    elif args.line is not None:
+        if args.line < 1:
+            print("--line must be 1 or greater.", file=sys.stderr)
+            return 2
+        output = line_window(text, args.line, args.context)
+    elif args.section is not None:
+        section = markdown_section(body, args.section)
+        if section is None:
+            print(f"Section not found: {args.section}", file=sys.stderr)
+            return 1
+        output = section
     else:
         output = text
     lines = output.splitlines()
@@ -308,6 +323,49 @@ def cmd_read(args):
         lines = lines[: args.head]
     print("\n".join(lines))
     return 0
+
+
+def line_window(text, line_number, context):
+    lines = text.splitlines()
+    if line_number > len(lines):
+        raise SystemExit(f"--line is outside file range: {line_number} > {len(lines)}")
+    context = max(0, context)
+    start = max(1, line_number - context)
+    end = min(len(lines), line_number + context)
+    width = len(str(end))
+    return "\n".join(f"{index:>{width}}: {lines[index - 1]}" for index in range(start, end + 1))
+
+
+def heading_match(line):
+    match = re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line)
+    if not match:
+        return None
+    return len(match.group(1)), match.group(2).strip()
+
+
+def markdown_section(markdown_text, query):
+    query_low = query.lower()
+    lines = markdown_text.splitlines()
+    start = None
+    level = None
+    for index, line in enumerate(lines):
+        heading = heading_match(line)
+        if heading is None:
+            continue
+        heading_level, heading_text = heading
+        if query_low in heading_text.lower() or query_low in line.lower():
+            start = index
+            level = heading_level
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        heading = heading_match(lines[index])
+        if heading is not None and heading[0] <= level:
+            end = index
+            break
+    return "\n".join(lines[start:end]).rstrip() + "\n"
 
 
 def split_terms(values):
@@ -321,7 +379,7 @@ def split_terms(values):
 
 
 def search_text_for_context(text, terms, context):
-    if context <= 0 or not terms:
+    if context < 0 or not terms:
         return []
     lowered_terms = [term.lower() for term in terms]
     lines = text.splitlines()
@@ -369,7 +427,7 @@ def cmd_search(args):
         if all_match and any_match:
             matches += 1
             print(f"{display_path(root, path)} - {data.get('title', '(untitled)')}")
-            context_text = "\n".join(haystack_parts)
+            context_text = path.read_text(encoding="utf-8")
             for snippet in search_text_for_context(context_text, all_terms + any_terms, args.context):
                 print(snippet)
     if matches == 0:
@@ -675,6 +733,9 @@ def build_parser():
     read.add_argument("--meta-only", action="store_true")
     read.add_argument("--body-only", action="store_true")
     read.add_argument("--head", type=int, help="Print only the first N lines.")
+    read.add_argument("--line", type=int, help="Print a specific file line with optional context.")
+    read.add_argument("--context", type=int, default=0, help="With --line, print N lines before and after the target line.")
+    read.add_argument("--section", help="Print the Markdown section whose heading contains this text.")
     read.set_defaults(func=cmd_read)
 
     search = sub.add_parser("search", help="Search titles, tags, and Markdown body without an index.")
@@ -683,7 +744,7 @@ def build_parser():
     search.add_argument("--tag", action="append", default=[])
     search.add_argument("--all", dest="all_terms", action="append", default=[], help="Comma-separated or repeated terms; all must match.")
     search.add_argument("--any", dest="any_terms", action="append", default=[], help="Comma-separated or repeated terms; at least one must match.")
-    search.add_argument("--context", type=int, default=0, help="Show N lines of context around matching body lines.")
+    search.add_argument("--context", type=int, default=0, help="Show N file lines of context around matching lines.")
     search.add_argument("--title-only", action="store_true")
     search.set_defaults(func=cmd_search)
 
