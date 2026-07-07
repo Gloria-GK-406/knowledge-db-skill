@@ -10,9 +10,15 @@ from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 
 KB_DIRS = ("source", "info", "knowledge")
+ALLOWED_STATUS = ("draft", "active", "deprecated", "rejected")
 REQUIRED = {
-    "info": ("kind", "title", "source", "created", "updated", "tags"),
-    "knowledge": ("kind", "title", "depends_on", "created", "updated", "tags", "status"),
+    "info": ("schema", "kind", "title", "source", "status", "updated", "tags"),
+    "knowledge": ("schema", "kind", "title", "depends_on", "status", "updated", "tags"),
+}
+SCHEMA_BY_KIND = {"info": "kb-info@1", "knowledge": "kb-knowledge@1"}
+RECOMMENDED_SECTIONS = {
+    "info": ("## Scope", "## Facts", "## Notes"),
+    "knowledge": ("## Problem", "## Conclusion", "## Limits", "## Reasoning"),
 }
 
 
@@ -117,6 +123,32 @@ def write_entry(path, metadata, heading, body=None):
     path.write_text(f"{compose_frontmatter(metadata)}\n\n{body.rstrip()}\n", encoding="utf-8")
 
 
+def default_info_body(title):
+    return (
+        f"# {title}\n\n"
+        "## Scope\n\n"
+        "Describe what this info entry covers and what it does not cover.\n\n"
+        "## Facts\n\n"
+        "Extract facts, mappings, summaries, fields, or observations from the source.\n\n"
+        "## Notes\n\n"
+        "Record extraction notes, known limits, missing data, or review caveats.\n"
+    )
+
+
+def default_knowledge_body(title):
+    return (
+        f"# {title}\n\n"
+        "## Problem\n\n"
+        "Describe the question, decision scenario, or problem scope.\n\n"
+        "## Conclusion\n\n"
+        "State the reusable conclusion, rule, recommendation, procedure, or guidance.\n\n"
+        "## Limits\n\n"
+        "State where the conclusion does not apply and what still needs verification.\n\n"
+        "## Reasoning\n\n"
+        "Explain how the conclusion is derived from the depends_on info entries.\n"
+    )
+
+
 def iter_entries(root, kind=None):
     kinds = [kind] if kind in ("info", "knowledge") else ["info", "knowledge"]
     for entry_kind in kinds:
@@ -181,14 +213,16 @@ def cmd_new_info(args):
         print(f"Refusing to overwrite existing file: {display_path(root, path)}", file=sys.stderr)
         return 2
     metadata = {
+        "schema": "kb-info@1",
         "kind": "info",
         "title": args.title,
         "source": args.source,
-        "created": today(),
+        "status": args.status,
         "updated": today(),
-        "tags": args.tag or [],
+        "tags": args.tag,
     }
-    write_entry(path, metadata, args.title, read_body_arg(args))
+    body = read_body_arg(args)
+    write_entry(path, metadata, args.title, body if body is not None else default_info_body(args.title))
     print(display_path(root, path))
     return 0
 
@@ -200,15 +234,16 @@ def cmd_new_knowledge(args):
         print(f"Refusing to overwrite existing file: {display_path(root, path)}", file=sys.stderr)
         return 2
     metadata = {
+        "schema": "kb-knowledge@1",
         "kind": "knowledge",
         "title": args.title,
-        "depends_on": args.depends_on or [],
-        "created": today(),
-        "updated": today(),
-        "tags": args.tag or [],
+        "depends_on": args.depends_on,
         "status": args.status,
+        "updated": today(),
+        "tags": args.tag,
     }
-    write_entry(path, metadata, args.title, read_body_arg(args))
+    body = read_body_arg(args)
+    write_entry(path, metadata, args.title, body if body is not None else default_knowledge_body(args.title))
     print(display_path(root, path))
     return 0
 
@@ -264,7 +299,7 @@ def print_tree(root, target, include_files, include_titles, max_depth):
             return
         children = []
         for child in sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
-            if child.name.startswith(".") and child.name != ".kb":
+            if child.name.startswith("."):
                 continue
             if child.is_dir():
                 children.append(child)
@@ -446,6 +481,11 @@ def source_reference_base(source):
     return source.split("#", 1)[0].replace("\\", "/")
 
 
+def is_safe_local_reference(value):
+    path = Path(value.replace("\\", "/"))
+    return not path.is_absolute() and ".." not in path.parts
+
+
 def web_source_accessible(source, timeout):
     url = source_reference_base(source)
     last_error = None
@@ -502,16 +542,41 @@ def cmd_scan(args):
         if error:
             problems.append(("ERROR", f"{rel}: {error}"))
             continue
+        allowed = set(REQUIRED[kind])
+        for key in sorted(set(data) - allowed):
+            problems.append(("ERROR", f"{rel}: unexpected frontmatter field: {key}"))
+        if data.get("schema") != SCHEMA_BY_KIND[kind]:
+            problems.append(("ERROR", f"{rel}: schema should be {SCHEMA_BY_KIND[kind]!r}"))
         if data.get("kind") != kind:
             problems.append(("ERROR", f"{rel}: kind should be {kind!r}"))
         for key in REQUIRED[kind]:
             if key not in data or data[key] in ("", []):
-                problems.append(("WARN", f"{rel}: missing {key}"))
+                problems.append(("ERROR", f"{rel}: missing {key}"))
+        if data.get("status") not in ALLOWED_STATUS:
+            problems.append(("ERROR", f"{rel}: status should be one of {', '.join(ALLOWED_STATUS)}"))
+        if "updated" in data and parse_date(data.get("updated")) is None:
+            problems.append(("ERROR", f"{rel}: updated should be a valid YYYY-MM-DD date"))
+        tags = data.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tags]
+        if not tags:
+            problems.append(("ERROR", f"{rel}: tags must contain at least one item"))
+        for section in RECOMMENDED_SECTIONS[kind]:
+            if section not in _body:
+                problems.append(("WARN", f"{rel}: missing recommended section: {section}"))
         if kind == "info":
             sources = data.get("source", [])
             if isinstance(sources, str):
                 sources = [sources]
             for source in sources:
+                source_base = source_reference_base(source)
+                if not is_web_source(source):
+                    if not is_safe_local_reference(source_base):
+                        problems.append(("ERROR", f"{rel}: source path must stay inside the knowledge base: {source}"))
+                        continue
+                    if not source_base.startswith("source/"):
+                        problems.append(("ERROR", f"{rel}: local source must point under source/: {source}"))
+                        continue
                 available, detail = source_available(root, source, args.web_timeout)
                 if not available:
                     if is_web_source(source):
@@ -524,6 +589,19 @@ def cmd_scan(args):
             if isinstance(deps, str):
                 deps = [deps]
             for dep in deps:
+                dep_base = source_reference_base(dep)
+                if is_web_source(dep):
+                    problems.append(("ERROR", f"{rel}: depends_on must point to info/**/*.md, not a URL: {dep}"))
+                    continue
+                if dep_base != dep.replace("\\", "/"):
+                    problems.append(("ERROR", f"{rel}: depends_on must not include fragments: {dep}"))
+                    continue
+                if not is_safe_local_reference(dep):
+                    problems.append(("ERROR", f"{rel}: depends_on path must stay inside the knowledge base: {dep}"))
+                    continue
+                if dep.startswith("source/") or dep.startswith("knowledge/") or not dep.startswith("info/") or not dep.endswith(".md"):
+                    problems.append(("ERROR", f"{rel}: depends_on must point to info/**/*.md: {dep}"))
+                    continue
                 if not resolve_kb_rel(root, dep).exists():
                     problems.append(("ERROR", f"{rel}: missing dependency: {dep}"))
 
@@ -686,17 +764,18 @@ def cmd_stale(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Operate a small local Markdown knowledge base.")
-    parser.add_argument("--kb", default=".kb", help="Knowledge base root directory. Default: .kb")
+    parser.add_argument("--kb", default=".", help="Knowledge base root directory. Default: current directory")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    init = sub.add_parser("init", help="Create .kb/source, .kb/info, and .kb/knowledge.")
+    init = sub.add_parser("init", help="Create source, info, and knowledge directories.")
     init.set_defaults(func=cmd_init)
 
     new_info = sub.add_parser("new-info", help="Create an info Markdown entry.")
     new_info.add_argument("path")
     new_info.add_argument("--title", required=True)
     new_info.add_argument("--source", action="append", required=True)
-    new_info.add_argument("--tag", action="append", default=[])
+    new_info.add_argument("--tag", action="append", required=True)
+    new_info.add_argument("--status", choices=ALLOWED_STATUS, default="draft")
     new_info.add_argument("--body", help="Markdown body to write at creation time.")
     new_info.add_argument("--body-file", help="Path to a UTF-8 Markdown body file to write at creation time.")
     new_info.add_argument("--body-stdin", action="store_true", help="Read Markdown body from stdin at creation time.")
@@ -706,9 +785,9 @@ def build_parser():
     new_knowledge = sub.add_parser("new-knowledge", help="Create a knowledge Markdown entry.")
     new_knowledge.add_argument("path")
     new_knowledge.add_argument("--title", required=True)
-    new_knowledge.add_argument("--depends-on", action="append", default=[], help="Repeatable. Add one dependency path each time.")
-    new_knowledge.add_argument("--tag", action="append", default=[])
-    new_knowledge.add_argument("--status", default="draft")
+    new_knowledge.add_argument("--depends-on", action="append", required=True, help="Repeatable. Add one dependency path each time.")
+    new_knowledge.add_argument("--tag", action="append", required=True)
+    new_knowledge.add_argument("--status", choices=ALLOWED_STATUS, default="draft")
     new_knowledge.add_argument("--body", help="Markdown body to write at creation time.")
     new_knowledge.add_argument("--body-file", help="Path to a UTF-8 Markdown body file to write at creation time.")
     new_knowledge.add_argument("--body-stdin", action="store_true", help="Read Markdown body from stdin at creation time.")
@@ -749,9 +828,13 @@ def build_parser():
     search.add_argument("--title-only", action="store_true")
     search.set_defaults(func=cmd_search)
 
-    scan = sub.add_parser("scan", help="Validate metadata and references.")
+    scan = sub.add_parser("scan", help="Validate metadata, references, and dependency constraints.")
     scan.add_argument("--web-timeout", type=float, default=5.0, help="Seconds to wait when checking web sources. Default: 5.")
     scan.set_defaults(func=cmd_scan)
+
+    validate = sub.add_parser("validate", help="Alias for scan.")
+    validate.add_argument("--web-timeout", type=float, default=5.0, help="Seconds to wait when checking web sources. Default: 5.")
+    validate.set_defaults(func=cmd_scan)
 
     trace = sub.add_parser("trace", help="Trace a knowledge entry to its info dependencies and sources.")
     trace.add_argument("path")

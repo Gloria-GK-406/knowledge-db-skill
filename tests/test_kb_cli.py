@@ -5,12 +5,13 @@ import unittest
 import os
 import shutil
 import threading
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_DIR = ROOT / "skills" / "knowledge-db" / "scripts"
+SCRIPT_DIR = ROOT / "skills" / "knowledge-db-maintain" / "scripts"
 KB = SCRIPT_DIR / "kb.py"
 KB_PS1 = SCRIPT_DIR / "kb.ps1"
 KB_SH = SCRIPT_DIR / "kb.sh"
@@ -91,7 +92,7 @@ class KbCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
 
-            root = Path(tmp) / ".kb"
+            root = Path(tmp)
             self.assertTrue((root / "source").is_dir())
             self.assertTrue((root / "info").is_dir())
             self.assertTrue((root / "knowledge").is_dir())
@@ -127,7 +128,7 @@ class KbCliTests(unittest.TestCase):
     def test_new_entries_list_tree_search_and_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
-            source = Path(tmp) / ".kb" / "source" / "sap" / "Configuration Activity.xlsm"
+            source = Path(tmp) / "source" / "sap" / "Configuration Activity.xlsm"
             source.parent.mkdir(parents=True)
             source.write_text("placeholder", encoding="utf-8")
 
@@ -186,6 +187,8 @@ class KbCliTests(unittest.TestCase):
                 "Missing dependency",
                 "--depends-on",
                 "info/nope.md",
+                "--tag",
+                "test",
             )
 
             result = self.run_kb(tmp, "scan", check=False)
@@ -225,7 +228,7 @@ class KbCliTests(unittest.TestCase):
                     "--tag",
                     "web",
                     "--body",
-                    "Collected from a web page.",
+                    "# Web Source Info\n\n## Scope\n\nWeb access smoke test.\n\n## Facts\n\nCollected from a web page.\n\n## Notes\n\nLocal test server source.\n",
                 )
 
                 scan = self.run_kb(tmp, "scan")
@@ -271,7 +274,7 @@ class KbCliTests(unittest.TestCase):
     def test_create_with_body_file_and_read_modes(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
             body = Path(tmp) / "body.md"
             body.write_text("# Custom Body\n\nAlpha beta gamma.\n", encoding="utf-8")
@@ -290,7 +293,7 @@ class KbCliTests(unittest.TestCase):
                 str(body),
             )
 
-            entry = Path(tmp) / ".kb" / "info" / "manual" / "alpha.md"
+            entry = Path(tmp) / "info" / "manual" / "alpha.md"
             text = entry.read_text(encoding="utf-8")
             self.assertIn("# Custom Body", text)
             self.assertNotIn("# Alpha Info", text)
@@ -310,7 +313,7 @@ class KbCliTests(unittest.TestCase):
     def test_read_line_context_and_markdown_section(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
-            source = Path(tmp) / ".kb" / "source" / "templates.md"
+            source = Path(tmp) / "source" / "templates.md"
             source.write_text("raw source", encoding="utf-8")
             body = Path(tmp) / "templates-body.md"
             body.write_text(
@@ -349,7 +352,7 @@ class KbCliTests(unittest.TestCase):
                 str(body),
             )
 
-            entry = Path(tmp) / ".kb" / "info" / "manual" / "templates.md"
+            entry = Path(tmp) / "info" / "manual" / "templates.md"
             target_line = next(
                 index
                 for index, line in enumerate(entry.read_text(encoding="utf-8").splitlines(), start=1)
@@ -382,17 +385,18 @@ class KbCliTests(unittest.TestCase):
     def test_read_and_search_accept_utf8_sig_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
-            entry = Path(tmp) / ".kb" / "info" / "manual" / "bom.md"
+            entry = Path(tmp) / "info" / "manual" / "bom.md"
             entry.parent.mkdir(parents=True)
             entry.write_text(
                 "\ufeff---\n"
+                "schema: kb-info@1\n"
                 "kind: info\n"
                 "title: BOM Info\n"
                 "source:\n"
                 "  - source/manual.md\n"
-                "created: 2026-07-06\n"
+                "status: active\n"
                 "updated: 2026-07-06\n"
                 "tags:\n"
                 "  - bom\n"
@@ -412,7 +416,7 @@ class KbCliTests(unittest.TestCase):
     def test_enhanced_search_all_any_tags_and_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
             body = Path(tmp) / "body.md"
             body.write_text("line one\nshipping point\nbusiness catalog\nlast line\n", encoding="utf-8")
@@ -456,7 +460,7 @@ class KbCliTests(unittest.TestCase):
     def test_trace_impact_and_stale(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_kb(tmp, "init")
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
             self.run_kb(
                 tmp,
@@ -469,9 +473,9 @@ class KbCliTests(unittest.TestCase):
                 "--tag",
                 "base",
             )
-            info_path = Path(tmp) / ".kb" / "info" / "manual" / "base-info.md"
+            info_path = Path(tmp) / "info" / "manual" / "base-info.md"
             info_text = info_path.read_text(encoding="utf-8").replace(
-                "updated: 2026-07-06", "updated: 2999-01-01"
+                f"updated: {date.today().isoformat()}", "updated: 2999-01-01"
             )
             info_path.write_text(info_text, encoding="utf-8")
 
@@ -513,7 +517,7 @@ class KbCliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             self.run_script(command, tmp, "init", env=env)
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
             self.run_script(
                 command,
@@ -524,6 +528,8 @@ class KbCliTests(unittest.TestCase):
                 "Info From PowerShell",
                 "--source",
                 "source/manual.md",
+                "--tag",
+                "powershell",
                 "--body",
                 "PowerShell wrapper body",
                 env=env,
@@ -551,7 +557,7 @@ class KbCliTests(unittest.TestCase):
             ]
 
             self.run_script_bytes(command, tmp, "init", env=env)
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
             self.run_script_bytes(
                 command,
@@ -597,7 +603,7 @@ class KbCliTests(unittest.TestCase):
 
             result = self.run_script(command, tmp, "init", env=env)
             self.assertIn("Initialized", result.stdout)
-            self.assertTrue((Path(tmp) / ".kb" / "source").is_dir())
+            self.assertTrue((Path(tmp) / "source").is_dir())
 
     def test_sh_wrapper_forwards_to_kb_py(self):
         shell = find_sh_shell()
@@ -609,7 +615,7 @@ class KbCliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             self.run_script(command, tmp, "init", env=env)
-            source = Path(tmp) / ".kb" / "source" / "manual.md"
+            source = Path(tmp) / "source" / "manual.md"
             source.write_text("raw source", encoding="utf-8")
             self.run_script(
                 command,
@@ -620,6 +626,8 @@ class KbCliTests(unittest.TestCase):
                 "Info From Sh",
                 "--source",
                 "source/manual.md",
+                "--tag",
+                "sh",
                 "--body",
                 "sh wrapper body",
                 env=env,
