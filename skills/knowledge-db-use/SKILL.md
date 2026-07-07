@@ -17,6 +17,8 @@ knowledge/   derived conclusions grounded in info
 
 The grounding chain is `knowledge -> info -> source`. Prefer answering from `knowledge` when a suitable entry exists. Read supporting `info` before relying on a conclusion when accuracy matters.
 
+Knowledge-base documents are expected to be written and maintained in English only. If entries contain non-English text, read them as available local evidence, but do not treat that as the desired authoring style.
+
 Use `knowledge-db-maintain` instead when the task asks to initialize, add, update, delete, repair, or validate the knowledge base.
 
 ## Local Reading Workflow
