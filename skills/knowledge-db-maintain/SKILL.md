@@ -94,6 +94,8 @@ tags:
 
 Allowed statuses are `draft`, `active`, `deprecated`, and `rejected`. Do not add extra frontmatter fields. Put explanation, notes, limits, and derivation in the Markdown body.
 
+Write every `tags`, `source`, and `depends_on` item as a YAML string. Quote tag values that YAML could parse as numbers, booleans, or nulls, especially SAP scope item codes and numeric IDs such as `"1e1"`, `"1e3"`, `"4e9"`, `"287"`, `"637"`, and `"649"`. Unquoted values like `1e1` may be parsed as the number `10` and will fail validation.
+
 ## Commands
 
 | Command | Purpose |
@@ -103,7 +105,7 @@ Allowed statuses are `draft`, `active`, `deprecated`, and `rejected`. Do not add
 | `new-knowledge PATH --title TITLE --depends-on INFO --tag TAG` | Create a `knowledge` entry with valid metadata and a body scaffold. |
 | `tree [PATH] --files --titles` | Browse directories and Markdown titles. |
 | `list [info|knowledge]` | List entries, optionally filtering by `--tag` or `--status`. |
-| `search QUERY` | Search title, tags, and body without an index. |
+| `search QUERY` | Search entries with weighted title, tag, path, heading, and body matching. |
 | `read PATH` | Read full content or focused slices. |
 | `scan` / `validate` | Validate structure, metadata, source references, and dependencies. |
 | `trace PATH` | Show `knowledge -> info -> source` or `info -> source`. |
@@ -118,7 +120,9 @@ Useful read options for checking entries before or after edits:
 | `--body-only` | Print only the Markdown body. |
 | `--head N` | Print only the first N lines. |
 | `--line N --context M` | Print a line window with file line numbers. |
-| `--section TEXT` | Print the Markdown section whose heading contains text. |
+| `--section TEXT --context N` | Print the Markdown section whose heading contains text, optionally with nearby section boundary context. |
+
+Use only one focused read mode at a time: `--meta-only`, `--body-only`, `--head N`, `--line N`, or `--section TEXT`. `--context` is allowed only with `--line` or `--section`.
 
 Useful search options:
 
@@ -129,6 +133,16 @@ Useful search options:
 | `--all a,b` | Require all listed terms. |
 | `--any a,b` | Require at least one listed term. |
 | `--context N` | Show N file lines around matches. |
+
+Search behavior:
+
+- Empty search queries are not supported. Use `list` or `tree` for browsing.
+- Ranking prefers title exact or phrase matches, then tags, path/filename/slug, headings, and body matches.
+- Hyphen, underscore, and space are equivalent for tags and slugs.
+- English search normalizes lowercase, hyphen/underscore splits, and simple camel-case boundaries. Chinese text remains searchable, with lightweight n-gram support for longer runs.
+- Acronym tokens such as `CBC`, `BTP`, `XSUAA`, and `S/4HANA` remain useful query terms.
+- Status influences order: `active` ranks above `draft`, while `deprecated` and `rejected` rank lower.
+- When `--kind` is omitted, the command searches both `info` and `knowledge`; do not assume one layer is hidden.
 
 ## Workflows
 
@@ -157,7 +171,7 @@ Useful search options:
 ### Turn Info Into Knowledge
 
 1. Locate relevant info with `tree`, `list`, or `search`.
-2. Read the info entries before deriving conclusions.
+2. Read the info entries before deriving conclusions; prefer `read PATH --section Facts --context 1` or a line window for long entries.
 3. Run `new-knowledge`, repeating `--depends-on` and `--tag` as needed.
 4. Fill `Problem`, `Conclusion`, `Limits`, and `Reasoning`.
 5. Run `trace` and then `scan`.
@@ -167,10 +181,11 @@ Useful search options:
 1. Use `trace` to inspect grounding before editing.
 2. Use `impact SOURCE_OR_INFO_PATH` after source or info changes.
 3. Use `stale` to find knowledge that may need review.
-4. Edit Markdown normally.
-5. Update the `updated` date when the entry meaning, sources, dependencies, or status changes.
-6. Preserve the required frontmatter shape and keep paths relative to the knowledge-base root.
-7. Run `trace` for changed knowledge entries, then run `scan`.
+4. Search with specific non-empty terms; browse with `tree` or `list` instead of empty search.
+5. Edit Markdown normally.
+6. Update the `updated` date when the entry meaning, sources, dependencies, or status changes.
+7. Preserve the required frontmatter shape and keep paths relative to the knowledge-base root.
+8. Run `trace` for changed knowledge entries, then run `scan`.
 
 ### Delete Entries Or Source
 
@@ -188,7 +203,7 @@ Useful search options:
 - Missing root directories: `source/`, `info/`, or `knowledge/`.
 - Missing or extra frontmatter fields.
 - Invalid `schema`, `kind`, `status`, or `updated`.
-- Empty `source`, `depends_on`, or `tags`.
+- Empty `source`, `depends_on`, or `tags`, or non-string items in those lists.
 - Local `info.source` outside `source/` or pointing to a missing file.
 - `knowledge.depends_on` pointing to a URL, `source/`, `knowledge/`, outside `info/`, or a missing info entry.
 

@@ -24,9 +24,9 @@ Use `knowledge-db-maintain` instead when the task asks to initialize, add, updat
 ## Local Reading Workflow
 
 1. Find the knowledge-base root: the directory that contains `source/`, `info/`, and `knowledge/`.
-2. Browse likely entries with `tree`, `rg --files info knowledge`, or existing local CLI read-only commands if available.
-3. Search with terms from the user request across `info/` and `knowledge/`.
-4. Read focused entries before answering. For long files, read the relevant heading or line window instead of loading everything.
+2. Browse likely entries with `tree`, `list`, `rg --files info knowledge`, or existing local CLI read-only commands if available.
+3. Search with non-empty terms from the user request across `info/` and `knowledge/`.
+4. Read focused entries before answering. For long files, read the relevant heading with section boundary context or a line window instead of loading everything.
 5. Trace important knowledge claims back to their `depends_on` info entries; inspect source references when the answer depends on provenance.
 6. Answer with the entry paths used and call out limits when supporting info is missing, stale-looking, or too narrow.
 
@@ -74,7 +74,12 @@ Statuses are `draft`, `active`, `deprecated`, and `rejected`. Treat `active` as 
 - Start with `knowledge/` for conclusions, procedures, rules, recommendations, and reusable explanations.
 - Search `info/` for extracted facts, source summaries, field mappings, catalogs, or evidence.
 - Search by title, tag, domain term, acronym, and likely source name.
-- If several entries match, prefer the most specific active entry with the newest `updated` date.
+- Use non-empty search queries. Empty search is not browsing; use `tree` or `list` to browse.
+- Search ranking prefers title exact or phrase matches, then tags, path/filename/slug, headings, and body matches.
+- Hyphen, underscore, and space are treated as equivalent for tags and slugs, so `btp subaccount`, `btp-subaccount`, and `btp_subaccount` should find the same entry.
+- Acronyms such as `CBC`, `BTP`, `XSUAA`, and `S/4HANA` are useful query terms and should be kept in the query.
+- Status affects ranking: active entries are preferred over draft entries, while deprecated and rejected entries are pushed down.
+- If several entries match, prefer the most specific active entry with the newest `updated` date after checking the ranked results.
 - If no `knowledge` entry exists, synthesize only from relevant `info` entries and say that the answer is derived from info rather than an existing knowledge entry.
 
 ## How To Read
@@ -83,6 +88,15 @@ Statuses are `draft`, `active`, `deprecated`, and `rejected`. Treat `active` as 
 - For `knowledge`, read every listed `depends_on` info entry when the answer depends on the conclusion.
 - For `info`, inspect `source` references when source identity or extraction reliability matters.
 - Use Markdown headings to keep reads focused: `Scope`, `Facts`, and `Notes` for info; `Problem`, `Conclusion`, `Limits`, and `Reasoning` for knowledge.
+- Use `read PATH --section Facts --context 1` when nearby section boundaries help orient the excerpt.
+- Use `read PATH --line N --context M` for precise evidence around a line number.
+- Use only one focused read mode at a time: `--meta-only`, `--body-only`, `--head N`, `--line N`, or `--section TEXT`. `--context` is allowed only with `--line` or `--section`.
+
+## How To Trace
+
+- Run `trace PATH` for a knowledge entry before relying on its conclusion; it shows `knowledge -> info -> source`.
+- Run `trace PATH` for an info entry when you need to inspect its raw source references.
+- If trace output points to missing or invalid dependencies, treat the entry as unreliable until maintained.
 
 ## Answering Rules
 

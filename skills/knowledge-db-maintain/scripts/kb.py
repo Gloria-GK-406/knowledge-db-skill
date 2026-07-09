@@ -66,17 +66,47 @@ def compose_frontmatter(metadata):
         if isinstance(value, list):
             lines.append(f"{key}:")
             for item in value:
-                lines.append(f"  - {item}")
+                lines.append(f"  - {format_yaml_scalar(item)}")
         else:
-            lines.append(f"{key}: {value}")
+            lines.append(f"{key}: {format_yaml_scalar(value)}")
     lines.append("---")
     return "\n".join(lines)
+
+
+def format_yaml_scalar(value):
+    text = str(value)
+    if needs_yaml_string_quotes(text):
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return text
+
+
+def needs_yaml_string_quotes(text):
+    stripped = text.strip()
+    if stripped != text or stripped == "":
+        return True
+    if stripped in {"~", "null", "Null", "NULL", "true", "True", "TRUE", "false", "False", "FALSE"}:
+        return True
+    if re.match(r"^[+-]?(?:\d+|\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?$", stripped):
+        return True
+    if re.match(r"^[+-]?\d+[eE][+-]?\d+$", stripped):
+        return True
+    return False
 
 
 def parse_scalar(value):
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
         return value[1:-1]
+    if value in {"true", "True", "TRUE"}:
+        return True
+    if value in {"false", "False", "FALSE"}:
+        return False
+    if value in {"~", "null", "Null", "NULL"}:
+        return None
+    if re.match(r"^[+-]?\d+$", value):
+        return int(value)
+    if re.match(r"^[+-]?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?$", value) or re.match(r"^[+-]?\d+[eE][+-]?\d+$", value):
+        return float(value)
     return value
 
 
@@ -254,7 +284,8 @@ def has_tag(data, wanted):
     tags = data.get("tags", [])
     if isinstance(tags, str):
         tags = [tags]
-    return all(tag in tags for tag in wanted)
+    normalized_tags = {normalize_search_text(tag) for tag in tags}
+    return all(tag in tags or normalize_search_text(tag) in normalized_tags for tag in wanted)
 
 
 def cmd_list(args):
@@ -330,35 +361,41 @@ def cmd_read(args):
         return 2
     text = read_utf8_text(path)
     yaml_text, body = split_frontmatter(text)
-    if args.meta_only and args.body_only:
-        print("Use only one of --meta-only or --body-only.", file=sys.stderr)
-        return 2
-    focused_modes = [args.meta_only, args.body_only, args.line is not None, args.section is not None]
+    focused_modes = [args.meta_only, args.body_only, args.head is not None, args.line is not None, args.section is not None]
     if sum(1 for enabled in focused_modes if enabled) > 1:
-        print("Use only one focused read mode: --meta-only, --body-only, --line, or --section.", file=sys.stderr)
+        print(read_mode_error(), file=sys.stderr)
+        return 2
+    if args.context and args.line is None and args.section is None:
+        print(read_mode_error(), file=sys.stderr)
         return 2
     if args.meta_only:
         output = f"---\n{yaml_text or ''}\n---\n"
     elif args.body_only:
         output = body
+    elif args.head is not None:
+        output = "\n".join(text.splitlines()[: args.head])
     elif args.line is not None:
         if args.line < 1:
             print("--line must be 1 or greater.", file=sys.stderr)
             return 2
         output = line_window(text, args.line, args.context)
     elif args.section is not None:
-        section = markdown_section(body, args.section)
+        section = markdown_section(body, args.section, args.context)
         if section is None:
             print(f"Section not found: {args.section}", file=sys.stderr)
             return 1
         output = section
     else:
         output = text
-    lines = output.splitlines()
-    if args.head is not None:
-        lines = lines[: args.head]
-    print("\n".join(lines))
+    print(output.rstrip("\n"))
     return 0
+
+
+def read_mode_error():
+    return (
+        "Use only one read mode: --meta-only, --body-only, --head N, --line N, or --section TEXT. "
+        "Allowed combinations: --line N --context M, --section TEXT --context N."
+    )
 
 
 def line_window(text, line_number, context):
@@ -379,7 +416,7 @@ def heading_match(line):
     return len(match.group(1)), match.group(2).strip()
 
 
-def markdown_section(markdown_text, query):
+def markdown_section(markdown_text, query, context=0):
     query_low = query.lower()
     lines = markdown_text.splitlines()
     start = None
@@ -401,7 +438,23 @@ def markdown_section(markdown_text, query):
         if heading is not None and heading[0] <= level:
             end = index
             break
-    return "\n".join(lines[start:end]).rstrip() + "\n"
+    selected = "\n".join(lines[start:end]).rstrip()
+    context = max(0, context)
+    if context == 0:
+        return selected + "\n"
+    all_headings = [(index, heading_match(line)[0], line) for index, line in enumerate(lines) if heading_match(line)]
+    selected_heading_index = next(index for index, item in enumerate(all_headings) if item[0] == start)
+    before = [
+        line
+        for _index, heading_level, line in all_headings[:selected_heading_index]
+        if heading_level <= level
+    ][-context:]
+    after = [
+        line
+        for _index, heading_level, line in all_headings[selected_heading_index + 1 :]
+        if heading_level <= level
+    ][:context]
+    return "\n".join(before + [selected] + after).rstrip() + "\n"
 
 
 def split_terms(values):
@@ -412,6 +465,108 @@ def split_terms(values):
             if term:
                 terms.append(term)
     return terms
+
+
+def normalize_search_text(value):
+    text = str(value or "")
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)
+    text = text.lower()
+    text = re.sub(r"[_\-\s]+", " ", text)
+    text = re.sub(r"[^\w\u4e00-\u9fff/]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def search_tokens(value):
+    normalized = normalize_search_text(value)
+    tokens = [token for token in normalized.split(" ") if token]
+    cjk_runs = re.findall(r"[\u4e00-\u9fff]+", normalized)
+    for run in cjk_runs:
+        for size in (2, 3):
+            if len(run) >= size:
+                tokens.extend(run[index : index + size] for index in range(0, len(run) - size + 1))
+    return tokens
+
+
+def term_in_text(term, text):
+    normalized_term = normalize_search_text(term)
+    normalized_text = normalize_search_text(text)
+    if not normalized_term:
+        return False
+    if normalized_term in normalized_text:
+        return True
+    tokens = search_tokens(normalized_term)
+    text_tokens = set(search_tokens(normalized_text))
+    return bool(tokens) and all(token in text_tokens for token in tokens)
+
+
+def markdown_headings(markdown_text):
+    headings = []
+    for line in markdown_text.splitlines():
+        heading = heading_match(line)
+        if heading is not None:
+            headings.append(heading[1])
+    return "\n".join(headings)
+
+
+def status_rank(status):
+    return {
+        "active": 30,
+        "draft": 10,
+        "deprecated": -20,
+        "rejected": -30,
+    }.get(status, 0)
+
+
+def field_match_score(term, text, exact_weight, phrase_weight, token_weight):
+    normalized_term = normalize_search_text(term)
+    normalized_text = normalize_search_text(text)
+    if not normalized_term or not normalized_text:
+        return 0
+    if normalized_term == normalized_text:
+        return exact_weight
+    if normalized_term in normalized_text:
+        boost = 50 if " " in normalized_term else 0
+        return phrase_weight + boost
+    tokens = search_tokens(normalized_term)
+    text_tokens = set(search_tokens(normalized_text))
+    if tokens and all(token in text_tokens for token in tokens):
+        return token_weight
+    return 0
+
+
+def entry_search_score(root, kind, path, data, body, terms):
+    tags = " ".join(list_value(data.get("tags")))
+    rel = display_path(root, path)
+    slug_parts = [
+        rel,
+        path.stem,
+        path.name,
+        " ".join(path.relative_to(root).with_suffix("").parts if path.is_relative_to(root) else path.with_suffix("").parts),
+    ]
+    headings = markdown_headings(body)
+    score = status_rank(data.get("status"))
+    if kind == "knowledge":
+        score += 5
+    elif kind == "info":
+        score += 3
+    for term in terms:
+        score += field_match_score(term, data.get("title", ""), 1000, 800, 500)
+        score += field_match_score(term, tags, 700, 620, 450)
+        score += field_match_score(term, "\n".join(slug_parts), 520, 430, 320)
+        score += field_match_score(term, headings, 360, 300, 220)
+        score += field_match_score(term, body, 160, 120, 80)
+    return score
+
+
+def entry_matches_terms(data, body, rel_path, all_terms, any_terms, title_only=False):
+    haystack_parts = [data.get("title", ""), " ".join(list_value(data.get("tags"))), rel_path]
+    if not title_only:
+        haystack_parts.extend([markdown_headings(body), body])
+    haystack = "\n".join(haystack_parts)
+    all_match = all(term_in_text(term, haystack) for term in all_terms)
+    any_match = True if not any_terms else any(term_in_text(term, haystack) for term in any_terms)
+    return all_match and any_match
 
 
 def search_text_for_context(text, terms, context):
@@ -440,33 +595,32 @@ def cmd_search(args):
     root = kb_root(args)
     all_terms = split_terms(args.all_terms)
     any_terms = split_terms(args.any_terms)
+    if args.query is not None and args.query.strip() == "":
+        print("Empty q is not supported. Use list or tree for browsing.", file=sys.stderr)
+        return 2
     if args.query:
         all_terms.insert(0, args.query)
     if not all_terms and not any_terms and not args.tag:
         print("Provide a query, --all/--any term, or --tag filter.", file=sys.stderr)
         return 2
-    all_terms_low = [term.lower() for term in all_terms]
-    any_terms_low = [term.lower() for term in any_terms]
-    matches = 0
+    results = []
     for kind, path in iter_entries(root, args.kind):
         data, body, error = read_entry(path)
         if error:
             continue
         if not has_tag(data, args.tag):
             continue
-        haystack_parts = [data.get("title", ""), " ".join(data.get("tags", []))]
-        if not args.title_only:
-            haystack_parts.append(body)
-        haystack = "\n".join(haystack_parts).lower()
-        all_match = all(term in haystack for term in all_terms_low)
-        any_match = True if not any_terms_low else any(term in haystack for term in any_terms_low)
-        if all_match and any_match:
-            matches += 1
-            print(f"{display_path(root, path)} - {data.get('title', '(untitled)')}")
-            context_text = read_utf8_text(path)
-            for snippet in search_text_for_context(context_text, all_terms + any_terms, args.context):
-                print(snippet)
-    if matches == 0:
+        rel = display_path(root, path)
+        if entry_matches_terms(data, body, rel, all_terms, any_terms, args.title_only):
+            score_terms = all_terms + any_terms + args.tag
+            score = entry_search_score(root, kind, path, data, body, score_terms)
+            results.append((-score, rel, path, data))
+    for _negative_score, rel, path, data in sorted(results):
+        print(f"{rel} - {data.get('title', '(untitled)')}")
+        context_text = read_utf8_text(path)
+        for snippet in search_text_for_context(context_text, all_terms + any_terms, args.context):
+            print(snippet)
+    if not results:
         print("No matches.")
     return 0
 
@@ -561,6 +715,8 @@ def cmd_scan(args):
             tags = [tags]
         if not tags:
             problems.append(("ERROR", f"{rel}: tags must contain at least one item"))
+        elif not all(isinstance(tag, str) and tag.strip() for tag in tags):
+            problems.append(("ERROR", f"{rel}: tags must contain only strings; quote numeric-looking tags such as \"1e1\" or \"287\""))
         for section in RECOMMENDED_SECTIONS[kind]:
             if section not in _body:
                 problems.append(("WARN", f"{rel}: missing recommended section: {section}"))
@@ -568,7 +724,12 @@ def cmd_scan(args):
             sources = data.get("source", [])
             if isinstance(sources, str):
                 sources = [sources]
+            if not sources:
+                problems.append(("ERROR", f"{rel}: source must contain at least one item"))
             for source in sources:
+                if not isinstance(source, str) or not source.strip():
+                    problems.append(("ERROR", f"{rel}: source must contain only non-empty strings"))
+                    continue
                 source_base = source_reference_base(source)
                 if not is_web_source(source):
                     if not is_safe_local_reference(source_base):
@@ -588,7 +749,12 @@ def cmd_scan(args):
             deps = data.get("depends_on", [])
             if isinstance(deps, str):
                 deps = [deps]
+            if not deps:
+                problems.append(("ERROR", f"{rel}: depends_on must contain at least one item"))
             for dep in deps:
+                if not isinstance(dep, str) or not dep.strip():
+                    problems.append(("ERROR", f"{rel}: depends_on must contain only non-empty strings"))
+                    continue
                 dep_base = source_reference_base(dep)
                 if is_web_source(dep):
                     problems.append(("ERROR", f"{rel}: depends_on must point to info/**/*.md, not a URL: {dep}"))
@@ -812,13 +978,13 @@ def build_parser():
     read.add_argument("path")
     read.add_argument("--meta-only", action="store_true")
     read.add_argument("--body-only", action="store_true")
-    read.add_argument("--head", type=int, help="Print only the first N lines; can combine with --line or --section.")
+    read.add_argument("--head", type=int, help="Print only the first N lines.")
     read.add_argument("--line", type=int, help="Print a specific file line with optional context.")
-    read.add_argument("--context", type=int, default=0, help="With --line, print N lines before and after the target line.")
-    read.add_argument("--section", help="Print the Markdown section whose heading contains this text.")
+    read.add_argument("--context", type=int, default=0, help="With --line or --section, print N lines or section boundaries around the target.")
+    read.add_argument("--section", help="Print the Markdown section whose heading contains this text, with optional boundary context.")
     read.set_defaults(func=cmd_read)
 
-    search = sub.add_parser("search", help="Search titles, tags, and Markdown body without an index.")
+    search = sub.add_parser("search", help="Search entries with weighted title, tag, path, heading, and body matching.")
     search.add_argument("query", nargs="?")
     search.add_argument("--kind", choices=("info", "knowledge"))
     search.add_argument("--tag", action="append", default=[])
