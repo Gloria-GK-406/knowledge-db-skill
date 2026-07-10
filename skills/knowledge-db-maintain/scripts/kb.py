@@ -27,7 +27,7 @@ ENTRY_SCHEMA = "kb-entry@2"
 PACKAGE_SCHEMA_FILE = "kb-package-schema.json"
 SKELETON_ROOT = Path(__file__).resolve().parents[1] / "assets" / "package-skeleton"
 MAX_WEIGHT = 1000
-SUPPORTED_NORMALIZERS = {"default", "keyword", "upper-case-code", "release-code"}
+SUPPORTED_NORMALIZERS = {"text", "keyword", "upper-case-code", "lower-case-code", "release-code"}
 
 
 def kb_root(args): return Path(args.kb).resolve()
@@ -119,21 +119,24 @@ def validate_field_definition(key, field):
     if not isinstance(field.get("description"), str) or not field["description"].strip(): raise ValueError(f"field {key} requires a description")
     if not isinstance(field.get("multiple"), bool): raise ValueError(f"field {key} multiple must be boolean")
     if not isinstance(field.get("filterable"), bool): raise ValueError(f"field {key} filterable must be boolean")
-    if "normalization" in field and field["normalization"] not in SUPPORTED_NORMALIZERS:
+    if field.get("normalization") not in SUPPORTED_NORMALIZERS:
         allowed = ", ".join(sorted(SUPPORTED_NORMALIZERS))
         raise ValueError(f"field {key} normalization must be one of {allowed}")
     search = field.get("search")
     if not isinstance(search, dict) or not isinstance(search.get("enabled"), bool): raise ValueError(f"field {key} search.enabled must be boolean")
     weight = search.get("weight")
-    if not isinstance(weight, int) or isinstance(weight, bool) or not 0 <= weight <= MAX_WEIGHT: raise ValueError(f"field {key} search.weight must be an integer from 0 to {MAX_WEIGHT}")
-    if not search.get("enabled", False) and weight != 0: raise ValueError(f"field {key} has a weight but is not searchable")
+    if search.get("enabled", False):
+        if not isinstance(weight, int) or isinstance(weight, bool) or not 1 <= weight <= MAX_WEIGHT:
+            raise ValueError(f"field {key} search.weight must be an integer from 1 to {MAX_WEIGHT}")
+    elif weight is not None:
+        raise ValueError(f"field {key} has a weight but is not searchable")
     aliases = field.get("aliases", {})
     if not isinstance(aliases, dict) or any(not isinstance(canonical, str) or not canonical.strip() or not isinstance(values, list) or not all(isinstance(item, str) and item.strip() for item in values) for canonical, values in aliases.items()): raise ValueError(f"field {key} aliases must map values to string arrays")
 
 
 def merged_schema(schema):
-    fields = {key: {"normalization": "default", **value, "origin": "core"} for key, value in CORE_FIELDS.items()}
-    fields.update({key: {"normalization": "default", **value, "origin": "package"} for key, value in schema["fields"].items()})
+    fields = {key: {"normalization": "keyword", **value, "origin": "core"} for key, value in CORE_FIELDS.items()}
+    fields.update({key: {**value, "origin": "package"} for key, value in schema["fields"].items()})
     return fields
 
 
@@ -221,6 +224,9 @@ def field_match_score(term, text, weight):
     term, text = normalize_search_text(term), normalize_search_text(text)
     if not term or not text: return 0
     if term == text: return weight
+    compact_term = re.sub(r"[^a-z0-9]", "", term)
+    compact_text = re.sub(r"[^a-z0-9]", "", text)
+    if compact_term and compact_term == compact_text: return weight
     if term in text: return int(weight * 0.80)
     tokens = search_tokens(term)
     return int(weight * 0.55) if tokens and all(token in set(search_tokens(text)) for token in tokens) else 0
@@ -246,7 +252,7 @@ def entry_matches_terms(root, path, data, body, terms, schema):
     for term in terms:
         if field_match_score(term, data.get("title", ""), 100) or field_match_score(term, body, 100):
             continue
-        if not any(field_match_score(normalize_filter_value(term, definition), text, 100) for text, definition in haystack[2:]):
+        if not any(field_match_score(term, text, 100) for text, definition in haystack[2:]):
             return False
     return True
 
@@ -260,7 +266,7 @@ def entry_score(root, path, data, body, terms, schema):
         for key, definition in schema["fields"].items():
             search = definition.get("search", {})
             if search.get("enabled") and key in metadata:
-                score += field_match_score(normalize_filter_value(term, definition), metadata_search_text(key, list_value(metadata[key]), definition), search.get("weight", 0))
+                score += field_match_score(term, metadata_search_text(key, list_value(metadata[key]), definition), search.get("weight", 0))
     return score
 
 

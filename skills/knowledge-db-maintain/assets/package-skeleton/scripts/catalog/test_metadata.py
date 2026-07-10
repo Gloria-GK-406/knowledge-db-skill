@@ -22,7 +22,7 @@ def test_write_artifact_metadata_uses_catalog_hash_and_public_urls():
             json.dumps(
                 {
                     "generator": {
-                        "name": "knowledge-service-catalog-builder",
+                        "name": "knowledge-package-catalog-builder",
                         "version": "abc123",
                     },
                     "validation": {
@@ -34,6 +34,10 @@ def test_write_artifact_metadata_uses_catalog_hash_and_public_urls():
                     "timingsMs": {
                         "validate": 11,
                         "buildCatalog": 22,
+                    },
+                    "catalog": {
+                        "schema": "kb-catalog@2",
+                        "schemaSha256": "a" * 64,
                     },
                 }
             ),
@@ -55,14 +59,14 @@ def test_write_artifact_metadata_uses_catalog_hash_and_public_urls():
 
         write_artifact_metadata(
             out_dir=out,
-            source_repo="example-org/example-knowledge-package",
+            source_repo="dlrk-dev/SAP-BTP-knowledge-db",
             source_ref="refs/tags/v0.1.0",
             source_revision="abc123",
             version="v0.1.0",
-            package_name="example-knowledge-package",
+            package_name="SAP-BTP-knowledge-db",
             public_base_url="https://minio.example/public/",
-            object_prefix="example-org/example-knowledge-package/v0.1.0",
-            latest_object_key="example-org/example-knowledge-package/latest.json",
+            object_prefix="dlrk-dev/SAP-BTP-knowledge-db/v0.1.0",
+            latest_object_key="dlrk-dev/SAP-BTP-knowledge-db/latest.json",
             builder_metadata_path=builder_metadata,
             timings_path=timings,
         )
@@ -72,20 +76,23 @@ def test_write_artifact_metadata_uses_catalog_hash_and_public_urls():
         metrics = json.loads((out / "build-metrics.json").read_text(encoding="utf-8"))
         latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
 
-    assert manifest["schema"] == "kb-catalog-artifact@1"
+    assert manifest["schema"] == "kb-catalog-artifact@2"
     assert manifest["sourceRevision"] == "abc123"
     assert manifest["version"] == "v0.1.0"
     assert manifest["catalog"]["path"] == "catalog.sqlite.gz"
+    assert manifest["catalog"]["schema"] == "kb-catalog@2"
+    assert manifest["catalog"]["schemaSha256"] == "a" * 64
     assert manifest["catalog"]["bytes"] == compressed_size
     assert len(manifest["catalog"]["sha256"]) == 64
     assert manifest["validation"]["entryCount"] == 3
     assert metrics["bytes"]["catalogCompressed"] == compressed_size
     assert metrics["timingsMs"]["validate"] == 11
     assert metrics["timingsMs"]["buildCatalog"] == 22
+    assert latest["schema"] == "kb-catalog-latest@2"
     assert latest["version"] == "v0.1.0"
-    assert latest["latestKey"] == "example-org/example-knowledge-package/latest.json"
-    assert latest["manifestKey"] == "example-org/example-knowledge-package/v0.1.0/manifest.json"
-    assert latest["manifestUrl"] == "https://minio.example/public/example-org/example-knowledge-package/v0.1.0/manifest.json"
+    assert latest["latestKey"] == "dlrk-dev/SAP-BTP-knowledge-db/latest.json"
+    assert latest["manifestKey"] == "dlrk-dev/SAP-BTP-knowledge-db/v0.1.0/manifest.json"
+    assert latest["manifestUrl"] == "https://minio.example/public/dlrk-dev/SAP-BTP-knowledge-db/v0.1.0/manifest.json"
 
 
 def test_smoke_catalog_checks_required_tables_revision_and_entry_count():
@@ -111,9 +118,9 @@ def test_smoke_catalog_checks_required_tables_revision_and_entry_count():
               tags_json TEXT NOT NULL,
               body TEXT NOT NULL
             );
-            INSERT INTO packages VALUES ('example-knowledge-package', '/kb', 'abc123', '2026-07-09T00:00:00Z');
+            INSERT INTO packages VALUES ('SAP-BTP-knowledge-db', '/kb', 'abc123', '2026-07-09T00:00:00Z');
             INSERT INTO entries (package_name, entry_path, kind, title, status, updated, tags_json, body)
-              VALUES ('example-knowledge-package', 'info/example.md', 'info', 'Example', 'active', '2026-07-09', '[]', 'Body');
+              VALUES ('SAP-BTP-knowledge-db', 'info/example.md', 'info', 'Example', 'active', '2026-07-09', '[]', 'Body');
             """
         )
         connection.commit()
@@ -121,18 +128,29 @@ def test_smoke_catalog_checks_required_tables_revision_and_entry_count():
 
         result = smoke_catalog(
             catalog_path=db_path,
-            package_name="example-knowledge-package",
+            package_name="SAP-BTP-knowledge-db",
             source_revision="abc123",
             required_tables=("packages", "entries"),
         )
 
     assert result["entryCount"] == 1
-    assert result["packageName"] == "example-knowledge-package"
+    assert result["packageName"] == "SAP-BTP-knowledge-db"
     assert result["revision"] == "abc123"
+
+
+def test_catalog_workflow_uses_only_package_local_producer():
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "catalog-artifact.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "python -m scripts.catalog.build_catalog" in workflow
+    assert "knowledge-service" not in workflow
+    assert "build_catalog_from_service.mjs" not in workflow
 
 
 def load_tests(loader, tests, pattern):
     suite = unittest.TestSuite()
     suite.addTest(unittest.FunctionTestCase(test_write_artifact_metadata_uses_catalog_hash_and_public_urls))
     suite.addTest(unittest.FunctionTestCase(test_smoke_catalog_checks_required_tables_revision_and_entry_count))
+    suite.addTest(unittest.FunctionTestCase(test_catalog_workflow_uses_only_package_local_producer))
     return suite

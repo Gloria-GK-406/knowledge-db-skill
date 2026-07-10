@@ -1,7 +1,7 @@
 # Package scripts
 
 These scripts operate on this knowledge package. They are intentionally package-local
-and contain no migration or query semantics.
+and compile the package without importing or checking out a query service.
 
 `check_package.py` requires [PyYAML](https://pyyaml.org/). Install it with
 `python -m pip install PyYAML` when it is not already available.
@@ -18,12 +18,13 @@ Run the catalog helper tests:
 python -m unittest scripts.catalog.test_metadata -v
 ```
 
-Build and query behavior are owned by `knowledge-service`. `catalog/build_catalog_from_service.mjs`
-only invokes that service's builder to create `catalog.sqlite`; `catalog/sqlite_smoke.py` checks the
-resulting artifact. The GitHub Actions workflow orchestrates these scripts and publication.
+Build a self-contained v2 SQLite catalog:
 
-Before enabling the workflow, set the repository variable
-`KNOWLEDGE_SERVICE_REPOSITORY` to the repository that supplies the catalog builder.
-Optionally set `KNOWLEDGE_SERVICE_REF`; it defaults to `main`. The workflow deliberately
-has no default service repository, so a package cannot publish an artifact with an
-implicit environment dependency.
+```powershell
+python -m scripts.catalog.build_catalog --kb . --package-name <package-name> --revision <git-sha> --out <output-directory>
+```
+
+The builder validates `kb-package-schema.json` and every entry before writing
+`catalog.sqlite`. On validation failure it writes `validation-report.json` and does
+not produce a catalog. `catalog/sqlite_smoke.py` checks the resulting artifact. The
+GitHub Actions workflow orchestrates these scripts and publication.

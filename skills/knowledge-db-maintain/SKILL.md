@@ -80,7 +80,7 @@ validation semantics come from frontmatter and `kb-package-schema.json`, never a
 Run `kb init` in an empty package root to materialize the generic schema, empty
 `source/`, `info/`, and `knowledge/` roots, package checker, catalog helpers, and artifact
 workflow. It is safe to rerun only while generated assets remain byte-identical; it refuses
-to overwrite changed files or directory collisions. Before enabling artifact CI, configure
-the repository variable `KNOWLEDGE_SERVICE_REPOSITORY` (and optionally
-`KNOWLEDGE_SERVICE_REF`). Package scripts orchestrate construction; the SQLite builder and
-runtime query contract remain owned by `knowledge-service`.
+to overwrite changed files or directory collisions. The generated Python producer validates
+the package and builds `kb-catalog@2` SQLite locally; its CI needs only package-local scripts,
+PyYAML, and the repository's MinIO publication secrets. It never checks out or imports a
+query service. A service consumes the published artifact and validates its generic v2 contract.

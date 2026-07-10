@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from shutil import copytree
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,10 +19,12 @@ SKELETON_ASSETS = (
     "knowledge/.gitkeep",
     "scripts/README.md",
     "scripts/check_package.py",
+    "scripts/test_check_package.py",
     "scripts/catalog/__init__.py",
-    "scripts/catalog/build_catalog_from_service.mjs",
+    "scripts/catalog/build_catalog.py",
     "scripts/catalog/metadata.py",
     "scripts/catalog/sqlite_smoke.py",
+    "scripts/catalog/test_build_catalog.py",
     "scripts/catalog/test_metadata.py",
     "scripts/catalog/write_artifact_metadata.py",
     ".github/workflows/catalog-artifact.yml",
@@ -34,24 +37,24 @@ SCHEMA = {
     "fields": {
         "tags": {
             "type": "string", "multiple": True, "description": "Lightweight labels",
-            "filterable": True, "search": {"enabled": True, "weight": 620},
+            "filterable": True, "search": {"enabled": True, "weight": 620}, "normalization": "keyword",
         },
         "country": {
             "type": "string", "multiple": True, "description": "Applicable country",
-            "filterable": True, "search": {"enabled": True, "weight": 700},
+            "filterable": True, "search": {"enabled": True, "weight": 700}, "normalization": "upper-case-code",
             "aliases": {"JP": ["Japan", "日本"]},
         },
         "capability": {
             "type": "string", "multiple": True, "description": "Scope item",
-            "filterable": True, "search": {"enabled": True, "weight": 900},
+            "filterable": True, "search": {"enabled": True, "weight": 900}, "normalization": "upper-case-code",
         },
         "release": {
             "type": "string", "multiple": False, "description": "Release", "filterable": True,
-            "search": {"enabled": False, "weight": 0},
+            "search": {"enabled": False}, "normalization": "release-code",
         },
         "note": {
             "type": "string", "multiple": False, "description": "Non-queryable note", "filterable": False,
-            "search": {"enabled": False, "weight": 0},
+            "search": {"enabled": False}, "normalization": "keyword",
         },
     },
 }
@@ -90,9 +93,7 @@ class KbCliV2Tests(unittest.TestCase):
             (root / name).mkdir()
         (root / "kb-package-schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
         (root / "source" / "official.md").write_text("official", encoding="utf-8")
-        checker = root / "scripts" / "check_package.py"
-        checker.parent.mkdir()
-        checker.write_bytes((SKELETON / "scripts" / "check_package.py").read_bytes())
+        copytree(SKELETON / "scripts", root / "scripts")
 
     def write(self, root, rel, content):
         path = root / rel
@@ -120,6 +121,30 @@ class KbCliV2Tests(unittest.TestCase):
             )
             self.assertEqual(0, check.returncode, check.stderr)
             self.assertIn("OK:", check.stdout)
+            build = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "scripts.catalog.build_catalog",
+                    "--kb",
+                    str(root),
+                    "--package-name",
+                    "example-package",
+                    "--revision",
+                    "abc123",
+                    "--out",
+                    str(root / "out"),
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="strict",
+            )
+            self.assertEqual(0, build.returncode, build.stderr)
+            self.assertTrue((root / "out" / "catalog.sqlite").is_file())
+            workflow = (root / ".github" / "workflows" / "catalog-artifact.yml").read_text(encoding="utf-8")
+            self.assertNotIn("knowledge-service", workflow)
             self.assertIn("Initialized", self.run_kb(root, "init").stdout)
 
     def test_init_refuses_to_overwrite_a_changed_skeleton_asset(self):
@@ -188,12 +213,12 @@ class KbCliV2Tests(unittest.TestCase):
 
             schema = self.run_kb(root, "scan", check=False)
             self.assertEqual(2, schema.returncode)
-            self.assertIn("must declare boolean multiple", schema.stderr)
+            self.assertIn("must declare multiple and filterable", schema.stderr)
 
             schema_path.write_text(json.dumps({
                 "schema": "kb-package-schema@2", "extends": "kb-core@2",
                 "fields": {"tags": {"type": "string", "multiple": True, "description": "Tags",
-                                    "filterable": True, "search": {"enabled": True, "weight": 620}}},
+                                    "filterable": True, "search": {"enabled": True, "weight": 620}, "normalization": "keyword"}},
             }), encoding="utf-8")
             self.write(root, "info/product/2602/shared/item.md", entry("info", "Bad reference", {"tags": ["general"]}, ["source/missing.md"]))
             (root / "info" / "product" / "2602" / "unexpected").mkdir(parents=True)
@@ -232,12 +257,12 @@ class KbCliV2Tests(unittest.TestCase):
             self.write(root, "info/bad.md", entry("info", "Bad", {"country": "JP", "unknown": "x"}))
             result = self.run_kb(root, "scan", check=False)
             self.assertEqual(2, result.returncode)
-            self.assertIn("requires non-empty 'source' string list", result.stderr)
+            self.assertIn("source must be a non-empty string list", result.stderr)
 
             self.write(root, "info/bad.md", entry("info", "Bad", {"country": "JP"}, ["source/official.md"]))
             result = self.run_kb(root, "scan", check=False)
             self.assertEqual(2, result.returncode)
-            self.assertIn("metadata field 'country' must be a list of strings", result.stderr)
+            self.assertIn("metadata field 'country' must be a non-empty list", result.stderr)
 
             self.write(root, "info/bad.md", entry("info", "Bad", {"country": ["JP"], "unknown": "x"}, ["source/official.md"]))
             result = self.run_kb(root, "scan", check=False)
@@ -260,12 +285,12 @@ class KbCliV2Tests(unittest.TestCase):
             human = self.run_kb(root, "schema").stdout
             self.assertIn("title (core)", human); self.assertIn("country (package)", human)
             self.assertIn("Applicable country", human)
-            self.assertIn("required=", human); self.assertIn("normalization=default", human)
+            self.assertIn("required=", human); self.assertIn("normalization=upper-case-code", human)
             self.assertIn("aliases=JP:Japan,日本", human)
             parsed = json.loads(self.run_kb(root, "schema", "--json").stdout)
             self.assertEqual("kb-core@2", parsed["extends"])
             self.assertEqual(700, parsed["fields"]["country"]["search"]["weight"])
-            self.assertEqual("default", parsed["fields"]["country"]["normalization"])
+            self.assertEqual("upper-case-code", parsed["fields"]["country"]["normalization"])
 
     def test_search_and_list_use_generic_filter_or_within_and_and_across(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -319,7 +344,7 @@ class KbCliV2Tests(unittest.TestCase):
             schema_path.write_text(json.dumps(schema), encoding="utf-8")
             result = self.run_kb(root, "scan", check=False)
             self.assertEqual(2, result.returncode)
-            self.assertIn("must declare integer search.weight from 0 to 1000", result.stderr)
+            self.assertIn("must use a search weight from 1 through 1000", result.stderr)
 
     def test_real_package_normalizers_apply_to_schema_search_and_filters(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -12,8 +12,6 @@ env:
   PACKAGE_NAME: ${{ github.event.repository.name }}
   SOURCE_REPO: ${{ github.repository }}
   OBJECT_ROOT: ${{ github.repository }}
-  KNOWLEDGE_SERVICE_REPOSITORY: ${{ vars.KNOWLEDGE_SERVICE_REPOSITORY }}
-  KNOWLEDGE_SERVICE_REF: ${{ vars.KNOWLEDGE_SERVICE_REF || 'main' }}
 
 jobs:
   build-catalog:
@@ -30,28 +28,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require Knowledge Service builder configuration
-        run: |
-          if [ -z "$KNOWLEDGE_SERVICE_REPOSITORY" ]; then
-            echo "Repository variable KNOWLEDGE_SERVICE_REPOSITORY is required." >&2
-            exit 2
-          fi
-
-      - name: Check out Knowledge Service builder source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.KNOWLEDGE_SERVICE_REPOSITORY }}
-          ref: ${{ env.KNOWLEDGE_SERVICE_REF }}
-          path: .ci/knowledge-service
-          token: ${{ secrets.KNOWLEDGE_SERVICE_CHECKOUT_TOKEN || secrets.GITHUB_TOKEN }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: .ci/knowledge-service/package-lock.json
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -63,23 +39,14 @@ jobs:
       - name: Check knowledge package
         run: python scripts/check_package.py --kb "$GITHUB_WORKSPACE"
 
-      - name: Run artifact helper tests
-        run: python -m unittest scripts.catalog.test_metadata -v
+      - name: Run package producer tests
+        run: python -m unittest scripts.catalog.test_build_catalog scripts.catalog.test_metadata -v
 
-      - name: Install Knowledge Service dependencies
-        run: |
-          start_ms=$(date +%s%3N)
-          npm ci --prefix .ci/knowledge-service
-          end_ms=$(date +%s%3N)
-          echo "SETUP_MS=$((end_ms - start_ms))" >> "$GITHUB_ENV"
-
-      - name: Build catalog SQLite with Knowledge Service code
+      - name: Build self-contained catalog SQLite
         run: |
           out_dir="$RUNNER_TEMP/kb-catalog"
           mkdir -p "$out_dir"
-          npm exec --prefix .ci/knowledge-service -- tsx \
-            "$GITHUB_WORKSPACE/scripts/catalog/build_catalog_from_service.mjs" \
-            --service-root "$GITHUB_WORKSPACE/.ci/knowledge-service" \
+          python -m scripts.catalog.build_catalog \
             --kb "$GITHUB_WORKSPACE" \
             --package-name "$PACKAGE_NAME" \
             --revision "$GITHUB_SHA" \
@@ -98,6 +65,10 @@ jobs:
             --require-table info_sources \
             --require-table knowledge_dependencies \
             --require-table entries_fts \
+            --require-table package_schema \
+            --require-table field_definitions \
+            --require-table entry_metadata_values \
+            --require-table metadata_fts \
             --out "$OUT_DIR/smoke.json"
 
       - name: Compress catalog
@@ -130,7 +101,7 @@ jobs:
               now = start
           timings = {
               "checkout": 0,
-              "setup": int(os.environ.get("SETUP_MS", "0")),
+              "setup": 0,
               "compress": int(os.environ.get("COMPRESS_MS", "0")),
               "upload": 0,
               "total": max(0, now - start) if start else 0,
@@ -187,7 +158,7 @@ jobs:
           start = int(os.environ.get("WORKFLOW_START_MS", "0"))
           timings = {
               "checkout": 0,
-              "setup": int(os.environ.get("SETUP_MS", "0")),
+              "setup": 0,
               "compress": int(os.environ.get("COMPRESS_MS", "0")),
               "upload": int(os.environ.get("UPLOAD_MS", "0")),
               "total": max(0, int(time.time() * 1000) - start) if start else 0,
