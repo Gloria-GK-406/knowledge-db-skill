@@ -112,6 +112,8 @@ class KbCliV2Tests(unittest.TestCase):
             human = self.run_kb(root, "schema").stdout
             self.assertIn("title (core)", human); self.assertIn("country (package)", human)
             self.assertIn("Applicable country", human)
+            self.assertIn("required=", human); self.assertIn("normalization=default", human)
+            self.assertIn("aliases=JP:Japan,日本", human)
             parsed = json.loads(self.run_kb(root, "schema", "--json").stdout)
             self.assertEqual("kb-core@2", parsed["extends"])
             self.assertEqual(700, parsed["fields"]["country"]["search"]["weight"])
@@ -136,6 +138,40 @@ class KbCliV2Tests(unittest.TestCase):
             self.assertEqual(2, non_filterable.returncode); self.assertIn("not filterable", non_filterable.stderr)
             empty = self.run_kb(root, "search", "", check=False)
             self.assertEqual(2, empty.returncode); self.assertIn("requires a query or --filter", empty.stderr)
+
+    def test_filter_normalizes_declared_values_without_using_aliases(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            self.write(root, "info/jp.md", entry("info", "Japan entry", {"country": ["JP"]}, ["source/official.md"]))
+            normalized = self.run_kb(root, "search", "--filter", "country=jp").stdout
+            self.assertIn("info/jp.md", normalized)
+            aliased = self.run_kb(root, "search", "--filter", "country=日本").stdout
+            self.assertIn("No matches.", aliased)
+
+    def test_queries_skip_invalid_entries_and_read_or_trace_reject_them(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            self.write(root, "info/valid.md", entry("info", "Valid", {"country": ["JP"]}, ["source/official.md"]))
+            self.write(root, "info/invalid.md", entry("info", "Invalid", {"country": "JP"}, ["source/official.md"]))
+            listed = self.run_kb(root, "list", "info", "--filter", "country=JP").stdout
+            searched = self.run_kb(root, "search", "--filter", "country=JP").stdout
+            self.assertIn("info/valid.md", listed); self.assertNotIn("info/invalid.md", listed)
+            self.assertIn("info/valid.md", searched); self.assertNotIn("info/invalid.md", searched)
+            read = self.run_kb(root, "read", "info/invalid.md", "--meta-only", check=False)
+            trace = self.run_kb(root, "trace", "info/invalid.md", check=False)
+            self.assertEqual(1, read.returncode); self.assertIn("metadata.country must be an array", read.stderr)
+            self.assertEqual(1, trace.returncode); self.assertIn("metadata.country must be an array", trace.stderr)
+
+    def test_scan_rejects_boolean_keyword_weights(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            schema_path = root / "kb-package-schema.json"
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            schema["fields"]["country"]["search"]["weight"] = True
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            result = self.run_kb(root, "scan", check=False)
+            self.assertEqual(1, result.returncode)
+            self.assertIn("search.weight must be an integer", result.stdout)
 
     def test_metadata_weight_controls_keyword_order_and_alias_expands_keyword_only(self):
         with tempfile.TemporaryDirectory() as temp:

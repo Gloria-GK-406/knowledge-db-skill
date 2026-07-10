@@ -114,7 +114,7 @@ def validate_field_definition(key, field):
     search = field.get("search", {"enabled": False, "weight": 0})
     if not isinstance(search, dict) or not isinstance(search.get("enabled", False), bool): raise ValueError(f"field {key} search.enabled must be boolean")
     weight = search.get("weight", 0)
-    if not isinstance(weight, int) or not 0 <= weight <= MAX_WEIGHT: raise ValueError(f"field {key} search.weight must be an integer from 0 to {MAX_WEIGHT}")
+    if not isinstance(weight, int) or isinstance(weight, bool) or not 0 <= weight <= MAX_WEIGHT: raise ValueError(f"field {key} search.weight must be an integer from 0 to {MAX_WEIGHT}")
     if not search.get("enabled", False) and weight != 0: raise ValueError(f"field {key} has a weight but is not searchable")
     aliases = field.get("aliases", {})
     if not isinstance(aliases, dict) or any(not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value) for value in aliases.values()): raise ValueError(f"field {key} aliases must map values to string arrays")
@@ -188,7 +188,9 @@ def cmd_schema(args):
     else:
         for key in sorted(fields):
             field = fields[key]; search = field.get("search", {})
-            print(f"{key} ({field['origin']}) type={field['type']} multiple={field.get('multiple', False)} filterable={field.get('filterable', False)} searchable={search.get('enabled', False)} weight={search.get('weight', 0)} - {field.get('description', '')}")
+            required = "all" if field.get("required", False) else ",".join(field.get("required_for", [])) or "no"
+            aliases = ";".join(f"{value}:{','.join(values)}" for value, values in sorted(field.get("aliases", {}).items())) or "-"
+            print(f"{key} ({field['origin']}) type={field['type']} multiple={field.get('multiple', False)} required={required} filterable={field.get('filterable', False)} searchable={search.get('enabled', False)} weight={search.get('weight', 0)} normalization={field.get('normalization', 'default')} aliases={aliases} - {field.get('description', '')}")
     return 0
 
 
@@ -248,13 +250,22 @@ def parse_filters(raw_filters, schema):
         definition = schema["fields"].get(key)
         if definition is None: raise ValueError(f"unknown metadata field: {key}")
         if not definition.get("filterable", False): raise ValueError(f"metadata field is not filterable: {key}")
-        filters.setdefault(key, []).append(value)
+        filters.setdefault(key, []).append(normalize_filter_value(value, definition))
     return filters
 
 
-def matches_filters(data, filters):
+def normalize_filter_value(value, definition):
+    if definition.get("normalization", "default") == "default":
+        return normalize_search_text(value)
+    return str(value)
+
+
+def matches_filters(data, filters, schema):
     metadata = data.get("metadata", {})
-    return all(set(map(str, list_value(metadata.get(key)))) & set(values) for key, values in filters.items())
+    return all(
+        {normalize_filter_value(value, schema["fields"][key]) for value in list_value(metadata.get(key))} & set(values)
+        for key, values in filters.items()
+    )
 
 
 def load_query_schema(args):
@@ -269,7 +280,9 @@ def cmd_list(args):
     count = 0
     for _kind, path in iter_entries(root, args.kind):
         data, _body, error = read_entry(path)
-        if not error and (not args.status or data.get("status") == args.status) and matches_filters(data, filters):
+        if error or validate_entry(root, _kind, path, data, schema):
+            continue
+        if (not args.status or data.get("status") == args.status) and matches_filters(data, filters, schema):
             count += 1; print(f"{display_path(root, path)} - {data.get('title', '(untitled)')}")
     if not count and not args.quiet: print("No entries found.")
     return 0
@@ -284,7 +297,7 @@ def cmd_search(args):
     results = []
     for _kind, path in iter_entries(root, args.kind):
         data, body, error = read_entry(path)
-        if error or not matches_filters(data, filters): continue
+        if error or validate_entry(root, _kind, path, data, schema) or not matches_filters(data, filters, schema): continue
         if terms and not entry_matches_terms(root, path, data, body, terms, schema): continue
         results.append((-entry_score(root, path, data, body, terms, schema), display_path(root, path), data))
     for _score, rel, data in sorted(results): print(f"{rel} - {data.get('title', '(untitled)')}")
@@ -311,6 +324,14 @@ def cmd_scan(args):
 def cmd_read(args):
     root = kb_root(args); path = root / args.path
     if not path.exists(): print(f"Path not found: {args.path}", file=sys.stderr); return 2
+    try: schema = load_schema(root)
+    except ValueError as exc: print(str(exc), file=sys.stderr); return 2
+    data, body, error = read_entry(path)
+    if error:
+        print(error, file=sys.stderr); return 1
+    problems = validate_entry(root, entry_kind_for_path(root, path), path, data, schema)
+    if problems:
+        print("; ".join(problems), file=sys.stderr); return 1
     text = read_utf8_text(path); yaml_text, body = split_frontmatter(text)
     print((f"---\n{yaml_text or ''}\n---" if args.meta_only else body if args.body_only else text).rstrip()); return 0
 
@@ -318,8 +339,13 @@ def cmd_read(args):
 def cmd_trace(args):
     root = kb_root(args); path = root / args.path
     if not path.exists(): print(f"Path not found: {args.path}", file=sys.stderr); return 2
+    try: schema = load_schema(root)
+    except ValueError as exc: print(str(exc), file=sys.stderr); return 2
     data, _body, error = read_entry(path)
     if error: print(error, file=sys.stderr); return 1
+    problems = validate_entry(root, entry_kind_for_path(root, path), path, data, schema)
+    if problems:
+        print("; ".join(problems), file=sys.stderr); return 1
     print(f"{args.path} - {data.get('title', '(untitled)')}")
     if data.get("kind") == "info":
         for source in list_value(data.get("source")): print(f"  -> {source}")
@@ -333,6 +359,12 @@ def cmd_trace(args):
 
 
 def is_web_source(value): return urlsplit(value).scheme in ("http", "https")
+def entry_kind_for_path(root, path):
+    try:
+        kind = path.relative_to(root).parts[0]
+    except (ValueError, IndexError):
+        return ""
+    return kind if kind in ("info", "knowledge") else ""
 def source_reference_base(value): return urldefrag(value)[0] if is_web_source(value) else value.split("#", 1)[0].replace("\\", "/")
 def is_safe_local_reference(value):
     path = Path(value.replace("\\", "/")); return not path.is_absolute() and ".." not in path.parts
