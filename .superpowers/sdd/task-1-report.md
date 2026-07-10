@@ -25,3 +25,11 @@
 ## Follow-up contract concern
 
 The copied verified workflow and its catalog helper smoke test still require the service's current v1 SQLite tables (`packages`, `entries`, `entry_lines`, `info_sources`, `knowledge_dependencies`, `entries_fts`). This task deliberately did not alter the service contract. When the planned v2 service builder lands, its generic table requirements must be updated in both the package skeleton workflow and `test_metadata.py`; otherwise the template will fail its artifact smoke stage against a v2-only catalog.
+
+## Task 2: checker-authoritative validation
+
+- `kb scan` and `kb validate` now execute `scripts/check_package.py --kb <root>` and pass through its exit code and diagnostics. A missing checker is a clear exit-2 error.
+- The local schema reader now matches the generated checker: fields are string-only and must explicitly declare `multiple`, `description`, `filterable`, `search.enabled`, and bounded integer `search.weight`.
+- The generated checker rejects package values outside the nested `metadata` mapping. Query behavior remains path-independent.
+- The static v2 fixture now contains the package checker; transient test packages copy the same skeleton checker.
+- Verification: `PYTHONIOENCODING=utf-8 py -3 -m unittest tests.test_kb_cli -v` passed (20/20). Against the SAP package, `kb schema`, `kb search 16T --filter country=JP`, and `kb scan` all passed; scan printed `OK: package validation passed`.

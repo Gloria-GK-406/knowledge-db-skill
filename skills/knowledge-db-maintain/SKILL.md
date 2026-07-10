@@ -28,7 +28,11 @@ Every package extends `kb-core@2` in its root `kb-package-schema.json`. Core fro
 }
 ```
 
-`type` is `string`, `number`, or `boolean`; `multiple` selects an array versus single value. Package authors choose a field description, exact-filter availability, keyword-search availability, a bounded `0..1000` keyword weight, and optional field-scoped aliases. Do not put business fields such as country or capability in directories or top-level frontmatter.
+Every package field is a `string` and must explicitly declare `multiple`, a non-empty
+`description`, `filterable`, and `search.enabled` plus bounded `search.weight` (`0..1000`).
+`multiple` selects an array versus single value. Package authors choose exact-filter
+availability, keyword-search availability, and optional field-scoped aliases. Do not put
+business fields such as country or capability in directories or top-level frontmatter.
 
 ```yaml
 ---
@@ -64,3 +68,19 @@ kb trace knowledge/sap/intercompany.md
 Repeated values of one `--filter` key are OR; different keys are AND. Filters are normalized exact values. Aliases increase keyword recall only, never exact-filter matches. An empty search is permitted only with at least one filter. Search ranks declared metadata fields using their package-owned weights; paths and folder names do not supply metadata semantics.
 
 Use `scan` or `validate` after all changes. It rejects a missing/invalid schema, undeclared fields, bad cardinality or types, missing required package fields, missing `source`/`depends_on`, and invalid provenance references.
+
+`scan` and `validate` delegate to the package-owned `scripts/check_package.py --kb <root>`
+created by `kb init`; that generated checker is the authority for package validation and
+version-directory layout. It returns the checker exit code and diagnostics unchanged. Keep
+directories for maintenance organization only: queries, filters, aliases, scoring, and
+validation semantics come from frontmatter and `kb-package-schema.json`, never a path.
+
+## Initialize a Package
+
+Run `kb init` in an empty package root to materialize the generic schema, empty
+`source/`, `info/`, and `knowledge/` roots, package checker, catalog helpers, and artifact
+workflow. It is safe to rerun only while generated assets remain byte-identical; it refuses
+to overwrite changed files or directory collisions. Before enabling artifact CI, configure
+the repository variable `KNOWLEDGE_SERVICE_REPOSITORY` (and optionally
+`KNOWLEDGE_SERVICE_REF`). Package scripts orchestrate construction; the SQLite builder and
+runtime query contract remain owned by `knowledge-service`.

@@ -3,6 +3,7 @@
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -113,16 +114,16 @@ def validate_field_definition(key, field):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key): raise ValueError(f"invalid field key: {key!r}")
     if key in CORE_FIELDS: raise ValueError(f"package field conflicts with core field: {key}")
     if not isinstance(field, dict): raise ValueError(f"field {key} must be an object")
-    if field.get("type") not in {"string", "number", "boolean"}: raise ValueError(f"field {key} type must be string, number, or boolean")
+    if field.get("type") != "string": raise ValueError(f"field {key} type must be string")
     if not isinstance(field.get("description"), str) or not field["description"].strip(): raise ValueError(f"field {key} requires a description")
-    if "multiple" in field and not isinstance(field["multiple"], bool): raise ValueError(f"field {key} multiple must be boolean")
-    if "filterable" in field and not isinstance(field["filterable"], bool): raise ValueError(f"field {key} filterable must be boolean")
+    if not isinstance(field.get("multiple"), bool): raise ValueError(f"field {key} multiple must be boolean")
+    if not isinstance(field.get("filterable"), bool): raise ValueError(f"field {key} filterable must be boolean")
     if "normalization" in field and field["normalization"] not in SUPPORTED_NORMALIZERS:
         allowed = ", ".join(sorted(SUPPORTED_NORMALIZERS))
         raise ValueError(f"field {key} normalization must be one of {allowed}")
-    search = field.get("search", {"enabled": False, "weight": 0})
-    if not isinstance(search, dict) or not isinstance(search.get("enabled", False), bool): raise ValueError(f"field {key} search.enabled must be boolean")
-    weight = search.get("weight", 0)
+    search = field.get("search")
+    if not isinstance(search, dict) or not isinstance(search.get("enabled"), bool): raise ValueError(f"field {key} search.enabled must be boolean")
+    weight = search.get("weight")
     if not isinstance(weight, int) or isinstance(weight, bool) or not 0 <= weight <= MAX_WEIGHT: raise ValueError(f"field {key} search.weight must be an integer from 0 to {MAX_WEIGHT}")
     if not search.get("enabled", False) and weight != 0: raise ValueError(f"field {key} has a weight but is not searchable")
     aliases = field.get("aliases", {})
@@ -329,19 +330,13 @@ def cmd_search(args):
 
 
 def cmd_scan(args):
-    root = kb_root(args); problems = []
-    for dirname in KB_DIRS:
-        if not (root / dirname).is_dir(): problems.append(f"missing directory: {dirname}/")
-    try: schema = load_schema(root)
-    except ValueError as exc: problems.append(str(exc)); schema = None
-    if schema:
-        for kind, path in iter_entries(root):
-            data, _body, error = read_entry(path)
-            problems.extend([f"{display_path(root, path)}: {error}"] if error else validate_entry(root, kind, path, data, schema))
-    if problems:
-        for problem in problems: print(f"ERROR: {problem}")
-        return 1
-    print("OK"); return 0
+    root = kb_root(args); checker = root / "scripts" / "check_package.py"
+    if not checker.is_file():
+        print("missing generated package checker: scripts/check_package.py", file=sys.stderr); return 2
+    try:
+        return subprocess.run([sys.executable, str(checker), "--kb", str(root)]).returncode
+    except OSError as exc:
+        print(f"failed to run generated package checker: {exc}", file=sys.stderr); return 2
 
 
 def cmd_read(args):

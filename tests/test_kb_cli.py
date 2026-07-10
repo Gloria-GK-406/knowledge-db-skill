@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 KB = ROOT / "skills" / "knowledge-db-maintain" / "scripts" / "kb.py"
 FIXTURE = ROOT / "tests" / "fixtures" / "metadata-schema-v2"
+SKELETON = ROOT / "skills" / "knowledge-db-maintain" / "assets" / "package-skeleton"
 SKELETON_ASSETS = (
     "kb-package-schema.json",
     "source/.gitkeep",
@@ -45,11 +46,11 @@ SCHEMA = {
             "filterable": True, "search": {"enabled": True, "weight": 900},
         },
         "release": {
-            "type": "string", "description": "Release", "filterable": True,
+            "type": "string", "multiple": False, "description": "Release", "filterable": True,
             "search": {"enabled": False, "weight": 0},
         },
         "note": {
-            "type": "string", "description": "Non-queryable note", "filterable": False,
+            "type": "string", "multiple": False, "description": "Non-queryable note", "filterable": False,
             "search": {"enabled": False, "weight": 0},
         },
     },
@@ -88,6 +89,9 @@ class KbCliV2Tests(unittest.TestCase):
             (root / name).mkdir()
         (root / "kb-package-schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
         (root / "source" / "official.md").write_text("official", encoding="utf-8")
+        checker = root / "scripts" / "check_package.py"
+        checker.parent.mkdir()
+        checker.write_bytes((SKELETON / "scripts" / "check_package.py").read_bytes())
 
     def write(self, root, rel, content):
         path = root / rel
@@ -142,6 +146,50 @@ class KbCliV2Tests(unittest.TestCase):
             self.assertFalse((root / "kb-package-schema.json").exists())
             self.assertFalse((root / "source").exists())
 
+    def test_scan_and_validate_delegate_to_the_generated_package_checker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.run_kb(root, "init")
+            schema_path = root / "kb-package-schema.json"
+            schema_path.write_text(json.dumps({
+                "schema": "kb-package-schema@2", "extends": "kb-core@2",
+                "fields": {"country": {"type": "string", "description": "Country", "filterable": True,
+                                       "search": {"enabled": True, "weight": 700}}},
+            }), encoding="utf-8")
+
+            schema = self.run_kb(root, "scan", check=False)
+            self.assertEqual(2, schema.returncode)
+            self.assertIn("must declare boolean multiple", schema.stderr)
+
+            schema_path.write_text(json.dumps({
+                "schema": "kb-package-schema@2", "extends": "kb-core@2",
+                "fields": {"tags": {"type": "string", "multiple": True, "description": "Tags",
+                                    "filterable": True, "search": {"enabled": True, "weight": 620}}},
+            }), encoding="utf-8")
+            self.write(root, "info/product/2602/shared/item.md", entry("info", "Bad reference", {"tags": ["general"]}, ["source/missing.md"]))
+            (root / "info" / "product" / "2602" / "unexpected").mkdir(parents=True)
+
+            for command in ("scan", "validate"):
+                result = self.run_kb(root, command, check=False)
+                self.assertEqual(2, result.returncode)
+                self.assertIn("local reference does not exist", result.stderr)
+                self.assertIn("version directories may contain only shared/", result.stderr)
+
+    def test_schema_rejects_non_string_or_incompletely_declared_package_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            schema_path = root / "kb-package-schema.json"
+            schema_path.write_text(json.dumps({
+                "schema": "kb-package-schema@2", "extends": "kb-core@2",
+                "fields": {"rank": {"type": "number", "description": "Rank", "filterable": True,
+                                    "search": {"enabled": True, "weight": 1}}},
+            }), encoding="utf-8")
+
+            result = self.run_kb(root, "schema", check=False)
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("field rank type must be string", result.stderr)
+
     def test_scan_accepts_declared_nested_metadata_and_required_core_roles(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); self.make_package(root)
@@ -154,10 +202,18 @@ class KbCliV2Tests(unittest.TestCase):
             root = Path(temp); self.make_package(root)
             self.write(root, "info/bad.md", entry("info", "Bad", {"country": "JP", "unknown": "x"}))
             result = self.run_kb(root, "scan", check=False)
-            self.assertEqual(1, result.returncode)
-            self.assertIn("undeclared metadata field: unknown", result.stdout)
-            self.assertIn("metadata.country must be an array", result.stdout)
-            self.assertIn("missing source", result.stdout)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("requires non-empty 'source' string list", result.stderr)
+
+            self.write(root, "info/bad.md", entry("info", "Bad", {"country": "JP"}, ["source/official.md"]))
+            result = self.run_kb(root, "scan", check=False)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("metadata field 'country' must be a list of strings", result.stderr)
+
+            self.write(root, "info/bad.md", entry("info", "Bad", {"country": ["JP"], "unknown": "x"}, ["source/official.md"]))
+            result = self.run_kb(root, "scan", check=False)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("metadata field 'unknown' is not declared", result.stderr)
 
     def test_scan_rejects_package_values_outside_nested_metadata(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -166,8 +222,8 @@ class KbCliV2Tests(unittest.TestCase):
             content = content.replace("metadata:\n", "country: JP\nmetadata:\n")
             self.write(root, "info/bad-top-level.md", content)
             result = self.run_kb(root, "scan", check=False)
-            self.assertEqual(1, result.returncode)
-            self.assertIn("unexpected frontmatter field: country", result.stdout)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("unexpected frontmatter field(s): country", result.stderr)
 
     def test_schema_lists_merged_core_and_package_fields_in_human_and_json_forms(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -233,8 +289,8 @@ class KbCliV2Tests(unittest.TestCase):
             schema["fields"]["country"]["search"]["weight"] = True
             schema_path.write_text(json.dumps(schema), encoding="utf-8")
             result = self.run_kb(root, "scan", check=False)
-            self.assertEqual(1, result.returncode)
-            self.assertIn("search.weight must be an integer", result.stdout)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("must declare non-negative integer search.weight", result.stderr)
 
     def test_real_package_normalizers_apply_to_schema_search_and_filters(self):
         with tempfile.TemporaryDirectory() as temp:
