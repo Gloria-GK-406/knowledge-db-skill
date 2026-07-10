@@ -1,5 +1,6 @@
 # Local knowledge base instances and scratch data
 .kb/
+.worktrees/
 
 # Python
 __pycache__/
