@@ -1,5 +1,5 @@
 ---
-schema: kb-core@2
+schema: kb-entry@2
 kind: info
 title: Brazil Asset Tax Credit
 status: active

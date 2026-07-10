@@ -20,9 +20,11 @@ CORE_FIELDS = {
     "source": {"type": "string", "multiple": True, "required_for": ["info"], "role": "source", "description": "Evidence references for info."},
     "depends_on": {"type": "string", "multiple": True, "required_for": ["knowledge"], "role": "depends_on", "description": "Info dependencies for knowledge."},
 }
-CORE_SCHEMA = "kb-core@2"
+CORE_PROFILE = "kb-core@2"
+ENTRY_SCHEMA = "kb-entry@2"
 PACKAGE_SCHEMA_FILE = "kb-package-schema.json"
 MAX_WEIGHT = 1000
+SUPPORTED_NORMALIZERS = {"default", "keyword", "upper-case-code", "release-code"}
 
 
 def kb_root(args): return Path(args.kb).resolve()
@@ -58,12 +60,16 @@ def parse_simple_yaml(yaml_text):
         if not raw.strip() or raw.lstrip().startswith("#"): continue
         if raw.startswith("    - ") and current == "metadata" and nested:
             data["metadata"][nested].append(parse_scalar(raw[6:])); continue
+        if raw.startswith("  - ") and current == "metadata" and nested:
+            data["metadata"][nested].append(parse_scalar(raw[4:])); continue
         nested_match = re.match(r"^  ([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(.*))?$", raw)
         if nested_match and current == "metadata":
             nested, value = nested_match.groups(); value = value or ""
             data["metadata"][nested] = [] if value == "" else parse_scalar(value); continue
-        if raw.startswith("  - ") and current:
+        if raw.startswith("  - ") and current and current != "metadata":
             data[current].append(parse_scalar(raw[4:])); continue
+        if raw.startswith("- ") and current and current != "metadata":
+            data[current].append(parse_scalar(raw[2:])); continue
         match = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(.*))?$", raw)
         if not match: raise ValueError(f"Unsupported YAML line: {raw}")
         key, value = match.groups(); value = value or ""
@@ -95,7 +101,7 @@ def load_schema(root):
     try: schema = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc: raise ValueError(f"invalid {PACKAGE_SCHEMA_FILE}: {exc}") from exc
     if not isinstance(schema, dict) or schema.get("schema") != "kb-package-schema@2": raise ValueError("package schema must declare schema 'kb-package-schema@2'")
-    if schema.get("extends") != CORE_SCHEMA: raise ValueError("package schema must extend 'kb-core@2'")
+    if schema.get("extends") != CORE_PROFILE: raise ValueError("package schema must extend 'kb-core@2'")
     fields = schema.get("fields")
     if not isinstance(fields, dict): raise ValueError("package schema fields must be an object")
     for key, field in fields.items(): validate_field_definition(key, field)
@@ -110,7 +116,9 @@ def validate_field_definition(key, field):
     if not isinstance(field.get("description"), str) or not field["description"].strip(): raise ValueError(f"field {key} requires a description")
     if "multiple" in field and not isinstance(field["multiple"], bool): raise ValueError(f"field {key} multiple must be boolean")
     if "filterable" in field and not isinstance(field["filterable"], bool): raise ValueError(f"field {key} filterable must be boolean")
-    if "normalization" in field and field["normalization"] != "default": raise ValueError(f"field {key} normalization must be 'default'")
+    if "normalization" in field and field["normalization"] not in SUPPORTED_NORMALIZERS:
+        allowed = ", ".join(sorted(SUPPORTED_NORMALIZERS))
+        raise ValueError(f"field {key} normalization must be one of {allowed}")
     search = field.get("search", {"enabled": False, "weight": 0})
     if not isinstance(search, dict) or not isinstance(search.get("enabled", False), bool): raise ValueError(f"field {key} search.enabled must be boolean")
     weight = search.get("weight", 0)
@@ -137,7 +145,7 @@ def validate_entry(root, kind, path, data, schema):
     def error(message): problems.append(f"{rel}: {message}")
     for key in sorted(set(data) - (set(CORE_FIELDS) | {"metadata"})):
         error(f"unexpected frontmatter field: {key}")
-    if data.get("schema") != CORE_SCHEMA: error(f"schema should be {CORE_SCHEMA!r}")
+    if data.get("schema") != ENTRY_SCHEMA: error(f"schema should be {ENTRY_SCHEMA!r}")
     if data.get("kind") != kind: error(f"kind should be {kind!r}")
     for key in ("title", "status", "updated"):
         if not isinstance(data.get(key), str) or not data[key].strip(): error(f"missing {key}")
@@ -217,8 +225,12 @@ def field_match_score(term, text, weight):
 
 def metadata_search_text(key, values, definition):
     aliases = definition.get("aliases", {})
-    text = list(values)
-    for value in values: text.extend(aliases.get(str(value), []))
+    text = [normalize_filter_value(value, definition) for value in values]
+    for value in values:
+        normalized_value = normalize_filter_value(value, definition)
+        for canonical, alias_values in aliases.items():
+            if normalize_filter_value(canonical, definition) == normalized_value:
+                text.extend(alias_values)
     return " ".join(map(str, text))
 
 
@@ -226,8 +238,14 @@ def entry_matches_terms(root, path, data, body, terms, schema):
     metadata = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
     haystack = [data.get("title", ""), body]
     for key, definition in schema["fields"].items():
-        if definition.get("search", {}).get("enabled") and key in metadata: haystack.append(metadata_search_text(key, list_value(metadata[key]), definition))
-    return all(any(field_match_score(term, part, 100) for part in haystack) for term in terms)
+        if definition.get("search", {}).get("enabled") and key in metadata:
+            haystack.append((metadata_search_text(key, list_value(metadata[key]), definition), definition))
+    for term in terms:
+        if field_match_score(term, data.get("title", ""), 100) or field_match_score(term, body, 100):
+            continue
+        if not any(field_match_score(normalize_filter_value(term, definition), text, 100) for text, definition in haystack[2:]):
+            return False
+    return True
 
 
 def entry_score(root, path, data, body, terms, schema):
@@ -238,7 +256,8 @@ def entry_score(root, path, data, body, terms, schema):
         metadata = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
         for key, definition in schema["fields"].items():
             search = definition.get("search", {})
-            if search.get("enabled") and key in metadata: score += field_match_score(term, metadata_search_text(key, list_value(metadata[key]), definition), search.get("weight", 0))
+            if search.get("enabled") and key in metadata:
+                score += field_match_score(normalize_filter_value(term, definition), metadata_search_text(key, list_value(metadata[key]), definition), search.get("weight", 0))
     return score
 
 
@@ -255,8 +274,11 @@ def parse_filters(raw_filters, schema):
 
 
 def normalize_filter_value(value, definition):
-    if definition.get("normalization", "default") == "default":
+    normalizer = definition.get("normalization", "default")
+    if normalizer in {"default", "keyword"}:
         return normalize_search_text(value)
+    if normalizer in {"upper-case-code", "release-code"}:
+        return re.sub(r"[^A-Za-z0-9]+", "", str(value)).upper()
     return str(value)
 
 

@@ -42,7 +42,7 @@ SCHEMA = {
 
 
 def entry(kind, title, metadata=None, source=None, depends_on=None, status="active"):
-    core = ["schema: kb-core@2", f"kind: {kind}", f"title: {title}", f"status: {status}", "updated: 2026-07-10"]
+    core = ["schema: kb-entry@2", f"kind: {kind}", f"title: {title}", f"status: {status}", "updated: 2026-07-10"]
     if source is not None:
         core += ["source:"] + [f"  - {value}" for value in source]
     if depends_on is not None:
@@ -172,6 +172,46 @@ class KbCliV2Tests(unittest.TestCase):
             result = self.run_kb(root, "scan", check=False)
             self.assertEqual(1, result.returncode)
             self.assertIn("search.weight must be an integer", result.stdout)
+
+    def test_real_package_normalizers_apply_to_schema_search_and_filters(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            schema_path = root / "kb-package-schema.json"
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            schema["fields"]["tags"]["normalization"] = "keyword"
+            schema["fields"]["country"]["normalization"] = "upper-case-code"
+            schema["fields"]["capability"]["normalization"] = "upper-case-code"
+            schema["fields"]["release"]["normalization"] = "release-code"
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            self.write(root, "info/16T.md", entry("info", "Intercompany", {"tags": ["sap-configuration"], "country": ["JP"], "capability": ["16T"], "release": '"2602"'}, ["source/official.md"]))
+            self.assertIn("OK", self.run_kb(root, "scan").stdout)
+            result = self.run_kb(root, "search", "16t", "--filter", "country=jp").stdout
+            self.assertIn("info/16T.md", result)
+            discovered = json.loads(self.run_kb(root, "schema", "--json").stdout)
+            self.assertEqual("upper-case-code", discovered["fields"]["country"]["normalization"])
+
+    def test_real_v2_entry_schema_and_yaml_sequence_indentation_are_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            self.write(root, "info/16T.md", """---
+schema: kb-entry@2
+kind: info
+title: Intercompany
+source:
+- source/official.md
+status: active
+updated: '2026-07-10'
+metadata:
+  country:
+  - JP
+  capability:
+  - 16T
+---
+
+# Intercompany
+""")
+            self.assertIn("OK", self.run_kb(root, "scan").stdout)
+            self.assertIn("info/16T.md", self.run_kb(root, "search", "16T", "--filter", "country=jp").stdout)
 
     def test_metadata_weight_controls_keyword_order_and_alias_expands_keyword_only(self):
         with tempfile.TemporaryDirectory() as temp:

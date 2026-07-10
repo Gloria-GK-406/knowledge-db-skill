@@ -32,7 +32,7 @@ Every package extends `kb-core@2` in its root `kb-package-schema.json`. Core fro
 
 ```yaml
 ---
-schema: kb-core@2
+schema: kb-entry@2
 kind: info
 title: Intercompany Processing
 status: active
