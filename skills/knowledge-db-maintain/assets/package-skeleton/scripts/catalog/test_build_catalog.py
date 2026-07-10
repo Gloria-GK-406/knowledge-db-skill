@@ -134,6 +134,62 @@ Conclusion.
             finally:
                 connection.close()
 
+    def test_supports_more_than_ten_values_across_metadata_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "package"
+            out_dir = Path(tmp) / "out"
+            for name in ("source", "info", "knowledge"):
+                (root / name).mkdir(parents=True, exist_ok=True)
+            (root / "source" / "official.md").write_text("source\n", encoding="utf-8")
+            (root / "kb-package-schema.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "kb-package-schema@2",
+                        "extends": "kb-core@2",
+                        "fields": {
+                            "country": {"type": "string", "multiple": True, "description": "Countries", "filterable": True, "search": {"enabled": True, "weight": 700}, "normalization": "upper-case-code"},
+                            "tags": {"type": "string", "multiple": True, "description": "Tags", "filterable": True, "search": {"enabled": True, "weight": 620}, "normalization": "keyword"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            countries = "\n".join(f"    - C{index}" for index in range(51))
+            (root / "info" / "example.md").write_text(
+                f"""---
+schema: kb-entry@2
+kind: info
+title: Many values
+status: active
+updated: '2026-07-10'
+source:
+  - source/official.md
+metadata:
+  country:
+{countries}
+  tags:
+    - priority
+---
+
+Body.
+""",
+                encoding="utf-8",
+            )
+
+            result = build_catalog(
+                kb_root=root,
+                package_name="example-package",
+                revision="abc123",
+                out_dir=out_dir,
+            )
+
+            self.assertTrue(result["validation"]["ok"])
+            connection = sqlite3.connect(out_dir / "catalog.sqlite")
+            try:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM metadata_fts").fetchone()[0], 52)
+            finally:
+                connection.close()
+
 
 if __name__ == "__main__":
     unittest.main()

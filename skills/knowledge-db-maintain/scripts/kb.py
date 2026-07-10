@@ -14,20 +14,26 @@ from urllib.parse import urldefrag, urlsplit
 KB_DIRS = ("source", "info", "knowledge")
 ALLOWED_STATUS = ("draft", "active", "deprecated", "rejected")
 CORE_FIELDS = {
-    "schema": {"type": "string", "required": True, "role": "schema", "description": "Core contract version."},
-    "kind": {"type": "string", "required": True, "role": "kind", "description": "Entry layer."},
-    "title": {"type": "string", "required": True, "role": "title", "description": "Human-readable entry title.", "search": {"enabled": True, "weight": 1000}},
-    "status": {"type": "string", "required": True, "role": "status", "description": "Lifecycle status."},
-    "updated": {"type": "string", "required": True, "role": "updated", "description": "Last semantic update date."},
-    "source": {"type": "string", "multiple": True, "required_for": ["info"], "role": "source", "description": "Evidence references for info."},
-    "depends_on": {"type": "string", "multiple": True, "required_for": ["knowledge"], "role": "depends_on", "description": "Info dependencies for knowledge."},
+    "schema": {"type": "string", "required": True, "role": "schema", "description": "Core contract version.", "normalization": "keyword"},
+    "kind": {"type": "string", "required": True, "role": "kind", "description": "Entry layer.", "normalization": "keyword"},
+    "title": {"type": "string", "required": True, "role": "title", "description": "Human-readable entry title.", "normalization": "text", "search": {"enabled": True, "weight": 1000}},
+    "status": {"type": "string", "required": True, "role": "status", "description": "Lifecycle status.", "normalization": "keyword"},
+    "updated": {"type": "date", "required": True, "role": "updated", "description": "Last semantic update date.", "normalization": "date"},
+    "source": {"type": "string", "multiple": True, "required_for": ["info"], "role": "source", "description": "Evidence references for info.", "normalization": "text"},
+    "depends_on": {"type": "string", "multiple": True, "required_for": ["knowledge"], "role": "depends_on", "description": "Info dependencies for knowledge.", "normalization": "text"},
 }
 CORE_PROFILE = "kb-core@2"
 ENTRY_SCHEMA = "kb-entry@2"
 PACKAGE_SCHEMA_FILE = "kb-package-schema.json"
 SKELETON_ROOT = Path(__file__).resolve().parents[1] / "assets" / "package-skeleton"
 MAX_WEIGHT = 1000
-SUPPORTED_NORMALIZERS = {"text", "keyword", "upper-case-code", "lower-case-code", "release-code"}
+NORMALIZERS_BY_TYPE = {
+    "string": {"text", "keyword", "upper-case-code", "lower-case-code", "release-code"},
+    "integer": {"integer"},
+    "number": {"number"},
+    "boolean": {"boolean"},
+    "date": {"date"},
+}
 
 
 def kb_root(args): return Path(args.kb).resolve()
@@ -115,12 +121,13 @@ def validate_field_definition(key, field):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key): raise ValueError(f"invalid field key: {key!r}")
     if key in CORE_FIELDS: raise ValueError(f"package field conflicts with core field: {key}")
     if not isinstance(field, dict): raise ValueError(f"field {key} must be an object")
-    if field.get("type") != "string": raise ValueError(f"field {key} type must be string")
+    field_type = field.get("type")
+    if field_type not in NORMALIZERS_BY_TYPE: raise ValueError(f"field {key} type must be one of {', '.join(NORMALIZERS_BY_TYPE)}")
     if not isinstance(field.get("description"), str) or not field["description"].strip(): raise ValueError(f"field {key} requires a description")
     if not isinstance(field.get("multiple"), bool): raise ValueError(f"field {key} multiple must be boolean")
     if not isinstance(field.get("filterable"), bool): raise ValueError(f"field {key} filterable must be boolean")
-    if field.get("normalization") not in SUPPORTED_NORMALIZERS:
-        allowed = ", ".join(sorted(SUPPORTED_NORMALIZERS))
+    if field.get("normalization") not in NORMALIZERS_BY_TYPE[field_type]:
+        allowed = ", ".join(sorted(NORMALIZERS_BY_TYPE[field_type]))
         raise ValueError(f"field {key} normalization must be one of {allowed}")
     search = field.get("search")
     if not isinstance(search, dict) or not isinstance(search.get("enabled"), bool): raise ValueError(f"field {key} search.enabled must be boolean")
@@ -131,11 +138,13 @@ def validate_field_definition(key, field):
     elif weight is not None:
         raise ValueError(f"field {key} has a weight but is not searchable")
     aliases = field.get("aliases", {})
+    if aliases and (field_type != "string" or not search.get("enabled")):
+        raise ValueError(f"field {key} aliases require a searchable string field")
     if not isinstance(aliases, dict) or any(not isinstance(canonical, str) or not canonical.strip() or not isinstance(values, list) or not all(isinstance(item, str) and item.strip() for item in values) for canonical, values in aliases.items()): raise ValueError(f"field {key} aliases must map values to string arrays")
 
 
 def merged_schema(schema):
-    fields = {key: {"normalization": "keyword", **value, "origin": "core"} for key, value in CORE_FIELDS.items()}
+    fields = {key: {**value, "origin": "core"} for key, value in CORE_FIELDS.items()}
     fields.update({key: {**value, "origin": "package"} for key, value in schema["fields"].items()})
     return fields
 
@@ -177,8 +186,15 @@ def validate_entry(root, kind, path, data, schema):
         elif isinstance(value, list): error(f"metadata.{key} must be a single value"); continue
         expected = definition["type"]
         for item in values:
-            correct = isinstance(item, str) if expected == "string" else (isinstance(item, bool) if expected == "boolean" else isinstance(item, (int, float)) and not isinstance(item, bool))
-            if not correct or (expected == "string" and not item.strip()): error(f"metadata.{key} must contain {expected} values")
+            correct = (
+                isinstance(item, str) and bool(item.strip()) if expected == "string"
+                else isinstance(item, int) and not isinstance(item, bool) if expected == "integer"
+                else isinstance(item, (int, float)) and not isinstance(item, bool) if expected == "number"
+                else isinstance(item, bool) if expected == "boolean"
+                else isinstance(item, str) and parse_date(item) is not None if expected == "date"
+                else False
+            )
+            if not correct: error(f"metadata.{key} must contain {expected} values")
     if kind == "info":
         for source in list_value(data.get("source")):
             if is_web_source(source): continue
@@ -283,12 +299,29 @@ def parse_filters(raw_filters, schema):
 
 
 def normalize_filter_value(value, definition):
-    normalizer = definition.get("normalization", "default")
-    if normalizer in {"default", "keyword"}:
-        return normalize_search_text(value)
-    if normalizer in {"upper-case-code", "release-code"}:
-        return re.sub(r"[^A-Za-z0-9]+", "", str(value)).upper()
-    return str(value)
+    field_type, normalizer = definition["type"], definition["normalization"]
+    if field_type == "integer":
+        return str(value) if isinstance(value, int) and not isinstance(value, bool) else str(int(str(value)))
+    if field_type == "number":
+        if isinstance(value, (int, float)) and not isinstance(value, bool): return str(value)
+        candidate = str(value)
+        if not re.fullmatch(r"[+-]?(?:\d+|\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?", candidate):
+            raise ValueError("number filters must be numeric")
+        return str(int(candidate)) if re.fullmatch(r"[+-]?\d+", candidate) else str(float(candidate))
+    if field_type == "boolean":
+        if isinstance(value, bool): return str(value).lower()
+        lowered = str(value).lower()
+        if lowered not in {"true", "false"}: raise ValueError("boolean filters must be true or false")
+        return lowered
+    if field_type == "date":
+        candidate = str(value)
+        if parse_date(candidate) is None: raise ValueError("date filters must use YYYY-MM-DD")
+        return candidate
+    text = str(value).strip()
+    if normalizer == "text": return " ".join(text.lower().split())
+    if normalizer == "keyword": return re.sub(r"[-_/\s]+", " ", text.lower()).strip()
+    if normalizer in {"upper-case-code", "release-code"}: return text.upper()
+    return text.lower()
 
 
 def matches_filters(data, filters, schema):

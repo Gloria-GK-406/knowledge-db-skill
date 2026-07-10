@@ -316,7 +316,7 @@ def _load_catalog(connection: sqlite3.Connection, package_name: str, revision: s
         for key, values in entry["metadata"].items():
             for position, value in enumerate(values):
                 connection.execute("INSERT INTO entry_metadata_values (entry_id, field_definition_id, field_key, position, normalized_value, display_value) VALUES (?, ?, ?, ?, ?, ?)", (entry_id, field_ids[key], key, position, value, value))
-                connection.execute("INSERT INTO metadata_fts (rowid, field_key, value_text) VALUES (?, ?, ?)", (entry_id * 1000 + field_ids[key] * 10 + position, key, value))
+                connection.execute("INSERT INTO metadata_fts (field_key, value_text) VALUES (?, ?)", (key, value))
     for entry in entries:
         for position, dependency in enumerate(entry["depends_on"]):
             connection.execute("INSERT INTO knowledge_dependencies (entry_id, position, depends_on_entry_id) VALUES (?, ?, ?)", (entry_ids[entry["entry_path"]], position, entry_ids[dependency]))

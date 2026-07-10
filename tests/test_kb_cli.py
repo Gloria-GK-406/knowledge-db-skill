@@ -229,20 +229,61 @@ class KbCliV2Tests(unittest.TestCase):
                 self.assertIn("local reference does not exist", result.stderr)
                 self.assertIn("version directories may contain only shared/", result.stderr)
 
-    def test_schema_rejects_non_string_or_incompletely_declared_package_fields(self):
+    def test_schema_accepts_all_contract_field_types_and_rejects_incompatible_normalization(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); self.make_package(root)
             schema_path = root / "kb-package-schema.json"
             schema_path.write_text(json.dumps({
                 "schema": "kb-package-schema@2", "extends": "kb-core@2",
-                "fields": {"rank": {"type": "number", "description": "Rank", "filterable": True,
-                                    "search": {"enabled": True, "weight": 1}}},
+                "fields": {
+                    "rank": {"type": "number", "multiple": False, "description": "Rank", "filterable": True,
+                             "search": {"enabled": True, "weight": 1}, "normalization": "number"},
+                    "priority": {"type": "integer", "multiple": False, "description": "Priority", "filterable": True,
+                                 "search": {"enabled": False}, "normalization": "integer"},
+                    "enabled": {"type": "boolean", "multiple": False, "description": "Enabled", "filterable": True,
+                                "search": {"enabled": False}, "normalization": "boolean"},
+                    "effective_on": {"type": "date", "multiple": False, "description": "Effective date", "filterable": True,
+                                     "search": {"enabled": False}, "normalization": "date"},
+                },
             }), encoding="utf-8")
 
             result = self.run_kb(root, "schema", check=False)
 
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("rank (package) type=number", result.stdout)
+
+            schema_path.write_text(json.dumps({
+                "schema": "kb-package-schema@2", "extends": "kb-core@2",
+                "fields": {"rank": {"type": "number", "multiple": False, "description": "Rank", "filterable": True,
+                                    "search": {"enabled": True, "weight": 1}, "normalization": "keyword"}},
+            }), encoding="utf-8")
+            result = self.run_kb(root, "schema", check=False)
             self.assertEqual(2, result.returncode)
-            self.assertIn("field rank type must be string", result.stderr)
+            self.assertIn("normalization must be one of number", result.stderr)
+
+    def test_generic_filters_support_typed_metadata_values(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            (root / "kb-package-schema.json").write_text(json.dumps({
+                "schema": "kb-package-schema@2", "extends": "kb-core@2",
+                "fields": {
+                    "rank": {"type": "number", "multiple": False, "description": "Rank", "filterable": True,
+                             "search": {"enabled": True, "weight": 500}, "normalization": "number"},
+                    "enabled": {"type": "boolean", "multiple": False, "description": "Enabled", "filterable": True,
+                                "search": {"enabled": False}, "normalization": "boolean"},
+                    "effective_on": {"type": "date", "multiple": False, "description": "Effective date", "filterable": True,
+                                     "search": {"enabled": False}, "normalization": "date"},
+                },
+            }), encoding="utf-8")
+            self.write(root, "info/typed.md", entry("info", "Typed metadata", {
+                "rank": 7, "enabled": True, "effective_on": "2026-07-10",
+            }, ["source/official.md"]))
+
+            self.assertIn("info/typed.md", self.run_kb(root, "list", "info", "--filter", "rank=7").stdout)
+            self.assertIn("info/typed.md", self.run_kb(root, "search", "--filter", "enabled=true", "--filter", "effective_on=2026-07-10").stdout)
+            invalid = self.run_kb(root, "list", "info", "--filter", "rank=not-a-number", check=False)
+            self.assertEqual(2, invalid.returncode)
+            self.assertIn("number filters must be numeric", invalid.stderr)
 
     def test_scan_accepts_declared_nested_metadata_and_required_core_roles(self):
         with tempfile.TemporaryDirectory() as temp:

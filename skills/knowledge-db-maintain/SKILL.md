@@ -1,6 +1,6 @@
 ---
 name: knowledge-db-maintain
-description: Maintain a kb-core@2 local Markdown knowledge base, including package-defined metadata validation, generic metadata filtering, provenance tracing, and metadata-aware search.
+description: Use when maintaining a kb-core@2 local Markdown knowledge base with package-defined metadata, self-contained artifact validation, generic filters, provenance tracing, or metadata-aware search.
 ---
 
 # Knowledge DB Maintain
@@ -21,6 +21,7 @@ Every package extends `kb-core@2` in its root `kb-package-schema.json`. Core fro
       "multiple": true,
       "description": "Countries where this entry applies.",
       "filterable": true,
+      "normalization": "upper-case-code",
       "search": { "enabled": true, "weight": 700 },
       "aliases": { "JP": ["Japan", "日本"] }
     }
@@ -28,11 +29,12 @@ Every package extends `kb-core@2` in its root `kb-package-schema.json`. Core fro
 }
 ```
 
-Every package field is a `string` and must explicitly declare `multiple`, a non-empty
-`description`, `filterable`, and `search.enabled` plus bounded `search.weight` (`0..1000`).
-`multiple` selects an array versus single value. Package authors choose exact-filter
-availability, keyword-search availability, and optional field-scoped aliases. Do not put
-business fields such as country or capability in directories or top-level frontmatter.
+Package fields use `string`, `integer`, `number`, `boolean`, or `date`. Every definition
+explicitly declares its type, `multiple`, a non-empty `description`, `filterable`, compatible
+`normalization`, and `search.enabled`. Searchable fields use an integer `search.weight` from
+`1..1000`; disabled search fields omit `weight`. `multiple` selects an array versus single
+value. Aliases are allowed only for searchable string fields. Do not put business fields such
+as country or capability in directories or top-level frontmatter.
 
 ```yaml
 ---
@@ -40,15 +42,15 @@ schema: kb-entry@2
 kind: info
 title: Intercompany Processing
 status: active
-updated: 2026-07-10
+updated: '2026-07-10'
 source:
-  - source/sap/16T.md
+  - source/sap/"16T".md
 metadata:
   country:
     - JP
     - DE
   capability:
-    - 16T
+    - "16T"
 ---
 ```
 
