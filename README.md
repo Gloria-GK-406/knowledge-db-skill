@@ -1,64 +1,17 @@
 # Knowledge DB Skills
 
-Local Markdown knowledge-base skills for Codex. They organize a knowledge base directly in a repository root:
+Local Codex skills and a Python CLI for a `kb-core@2` Markdown knowledge base.
 
-- `source/`: raw external material stored as files; web pages can also be referenced directly by URL from info entries
-- `info/`: organized information extracted from source material
-- `knowledge/`: conclusions, procedures, and reusable understanding derived from info
-
-The skills keep provenance explicit: knowledge traces through info to source.
-
-- `knowledge-db-use`: read, search, trace, and answer from an existing local knowledge base.
-- `knowledge-db-maintain`: initialize, add, update, delete, and validate a local knowledge base.
-
-## Project Structure
+Each package has `source/`, `info/`, `knowledge/`, and a root `kb-package-schema.json`. The schema owns all business metadata fields and defines their cardinality, description, exact-filter support, keyword-search support, field weight, and aliases. Entries retain a small fixed core and place package values only under `metadata`.
 
 ```text
-.codex-plugin/plugin.json
-skills/knowledge-db-use/SKILL.md
-skills/knowledge-db-maintain/SKILL.md
-skills/knowledge-db-maintain/scripts/kb.py
-skills/knowledge-db-maintain/scripts/kb.ps1
-skills/knowledge-db-maintain/scripts/kb.sh
-tests/test_kb_cli.py
+python skills/knowledge-db-maintain/scripts/kb.py --kb PATH schema
+python skills/knowledge-db-maintain/scripts/kb.py --kb PATH scan
+python skills/knowledge-db-maintain/scripts/kb.py --kb PATH search "Japan" --filter country=JP
 ```
 
-## Usage
+Run tests with:
 
-Run the CLI from a workspace that contains, or should contain, `source/`, `info/`, and `knowledge/`.
-
-```bash
-python skills/knowledge-db-maintain/scripts/kb.py init
-python skills/knowledge-db-maintain/scripts/kb.py tree --files --titles
-python skills/knowledge-db-maintain/scripts/kb.py scan
+```text
+python -m unittest tests.test_kb_cli -v
 ```
-
-Use `--kb PATH` to operate on another knowledge-base root.
-
-```bash
-python skills/knowledge-db-maintain/scripts/kb.py --kb /path/to/kb scan
-```
-
-PowerShell:
-
-```powershell
-.\skills\knowledge-db-maintain\scripts\kb.ps1 scan
-```
-
-sh/bash:
-
-```bash
-sh skills/knowledge-db-maintain/scripts/kb.sh scan
-```
-
-Set `KB_PYTHON` when the wrapper should use a specific Python interpreter.
-
-## Testing
-
-```bash
-python -m unittest tests.test_kb_cli
-```
-
-## License
-
-MIT. See [LICENSE](LICENSE).

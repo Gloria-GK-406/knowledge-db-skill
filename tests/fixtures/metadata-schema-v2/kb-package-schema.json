@@ -1,0 +1,21 @@
+{
+  "schema": "kb-package-schema@2",
+  "extends": "kb-core@2",
+  "fields": {
+    "country": {
+      "type": "string",
+      "multiple": true,
+      "description": "Countries where the capability applies.",
+      "filterable": true,
+      "search": { "enabled": true, "weight": 700 },
+      "aliases": { "JP": ["Japan", "日本"] }
+    },
+    "capability": {
+      "type": "string",
+      "multiple": true,
+      "description": "Stable capability identifier.",
+      "filterable": true,
+      "search": { "enabled": true, "weight": 900 }
+    }
+  }
+}
