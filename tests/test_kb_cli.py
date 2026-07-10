@@ -10,6 +10,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 KB = ROOT / "skills" / "knowledge-db-maintain" / "scripts" / "kb.py"
 FIXTURE = ROOT / "tests" / "fixtures" / "metadata-schema-v2"
+SKELETON_ASSETS = (
+    "kb-package-schema.json",
+    "scripts/README.md",
+    "scripts/check_package.py",
+    "scripts/catalog/__init__.py",
+    "scripts/catalog/build_catalog_from_service.mjs",
+    "scripts/catalog/metadata.py",
+    "scripts/catalog/sqlite_smoke.py",
+    "scripts/catalog/test_metadata.py",
+    "scripts/catalog/write_artifact_metadata.py",
+    ".github/workflows/catalog-artifact.yml",
+)
 
 
 SCHEMA = {
@@ -78,6 +90,42 @@ class KbCliV2Tests(unittest.TestCase):
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+    def test_init_materializes_the_complete_generic_package_skeleton(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result = self.run_kb(root, "init")
+
+            self.assertIn("Initialized", result.stdout)
+            for directory in ("source", "info", "knowledge"):
+                self.assertTrue((root / directory).is_dir(), directory)
+            for asset in SKELETON_ASSETS:
+                path = root / asset
+                self.assertTrue(path.is_file(), asset)
+                self.assertNotIn("s4hana", path.read_text(encoding="utf-8").lower(), asset)
+            schema = json.loads((root / "kb-package-schema.json").read_text(encoding="utf-8"))
+            self.assertEqual("kb-package-schema@2", schema["schema"])
+            self.assertEqual({}, schema["fields"])
+            check = subprocess.run(
+                [sys.executable, str(root / "scripts" / "check_package.py"), "--kb", str(root)],
+                capture_output=True, text=True, encoding="utf-8", errors="strict",
+            )
+            self.assertEqual(0, check.returncode, check.stderr)
+            self.assertIn("OK:", check.stdout)
+            self.assertIn("Initialized", self.run_kb(root, "init").stdout)
+
+    def test_init_refuses_to_overwrite_a_changed_skeleton_asset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.run_kb(root, "init")
+            schema_path = root / "kb-package-schema.json"
+            schema_path.write_text('{"changed": true}\n', encoding="utf-8")
+
+            result = self.run_kb(root, "init", check=False)
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("refusing to overwrite modified package asset: kb-package-schema.json", result.stderr)
+            self.assertEqual('{"changed": true}\n', schema_path.read_text(encoding="utf-8"))
 
     def test_scan_accepts_declared_nested_metadata_and_required_core_roles(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -1,0 +1,5 @@
+{
+  "schema": "kb-package-schema@2",
+  "extends": "kb-core@2",
+  "fields": {}
+}

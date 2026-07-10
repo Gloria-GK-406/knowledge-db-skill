@@ -1,0 +1,275 @@
+name: Build catalog artifact
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE_NAME: ${{ github.event.repository.name }}
+  SOURCE_REPO: ${{ github.repository }}
+  OBJECT_ROOT: ${{ github.repository }}
+  KNOWLEDGE_SERVICE_REPOSITORY: ${{ vars.KNOWLEDGE_SERVICE_REPOSITORY || 'dlrk-dev/knowledge-service' }}
+  KNOWLEDGE_SERVICE_REF: ${{ vars.KNOWLEDGE_SERVICE_REF || 'master' }}
+
+jobs:
+  build-catalog:
+    name: Build and publish catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Mark workflow start
+        run: echo "WORKFLOW_START_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
+
+      - name: Check out knowledge base
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out Knowledge Service builder source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KNOWLEDGE_SERVICE_REPOSITORY }}
+          ref: ${{ env.KNOWLEDGE_SERVICE_REF }}
+          path: .ci/knowledge-service
+          token: ${{ secrets.KNOWLEDGE_SERVICE_CHECKOUT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .ci/knowledge-service/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package script dependencies
+        run: python -m pip install --disable-pip-version-check PyYAML
+
+      - name: Check knowledge package
+        run: python scripts/check_package.py --kb "$GITHUB_WORKSPACE"
+
+      - name: Run artifact helper tests
+        run: python -m unittest scripts.catalog.test_metadata -v
+
+      - name: Install Knowledge Service dependencies
+        run: |
+          start_ms=$(date +%s%3N)
+          npm ci --prefix .ci/knowledge-service
+          end_ms=$(date +%s%3N)
+          echo "SETUP_MS=$((end_ms - start_ms))" >> "$GITHUB_ENV"
+
+      - name: Build catalog SQLite with Knowledge Service code
+        run: |
+          out_dir="$RUNNER_TEMP/kb-catalog"
+          mkdir -p "$out_dir"
+          npm exec --prefix .ci/knowledge-service -- tsx \
+            "$GITHUB_WORKSPACE/scripts/catalog/build_catalog_from_service.mjs" \
+            --service-root "$GITHUB_WORKSPACE/.ci/knowledge-service" \
+            --kb "$GITHUB_WORKSPACE" \
+            --package-name "$PACKAGE_NAME" \
+            --revision "$GITHUB_SHA" \
+            --out "$out_dir"
+          echo "OUT_DIR=$out_dir" >> "$GITHUB_ENV"
+
+      - name: Smoke check catalog SQLite
+        run: |
+          python -m scripts.catalog.sqlite_smoke \
+            --catalog "$OUT_DIR/catalog.sqlite" \
+            --package-name "$PACKAGE_NAME" \
+            --source-revision "$GITHUB_SHA" \
+            --require-table packages \
+            --require-table entries \
+            --require-table entry_lines \
+            --require-table info_sources \
+            --require-table knowledge_dependencies \
+            --require-table entries_fts \
+            --out "$OUT_DIR/smoke.json"
+
+      - name: Compress catalog
+        run: |
+          start_ms=$(date +%s%3N)
+          gzip -n -c "$OUT_DIR/catalog.sqlite" > "$OUT_DIR/catalog.sqlite.gz"
+          end_ms=$(date +%s%3N)
+          echo "COMPRESS_MS=$((end_ms - start_ms))" >> "$GITHUB_ENV"
+
+      - name: Install AWS CLI for MinIO upload
+        run: python -m pip install --disable-pip-version-check awscli
+
+      - name: Write initial artifact metadata
+        env:
+          MINIO_PUBLIC_BASE_URL: ${{ secrets.MINIO_PUBLIC_BASE_URL }}
+        run: |
+          object_prefix="$OBJECT_ROOT/$GITHUB_REF_NAME"
+          latest_key="$OBJECT_ROOT/latest.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          start = int(os.environ.get("WORKFLOW_START_MS", "0"))
+          now = 0
+          try:
+              import time
+              now = int(time.time() * 1000)
+          except Exception:
+              now = start
+          timings = {
+              "checkout": 0,
+              "setup": int(os.environ.get("SETUP_MS", "0")),
+              "compress": int(os.environ.get("COMPRESS_MS", "0")),
+              "upload": 0,
+              "total": max(0, now - start) if start else 0,
+          }
+          Path(os.environ["OUT_DIR"], "timings.json").write_text(json.dumps(timings), encoding="utf-8")
+          PY
+          python -m scripts.catalog.write_artifact_metadata \
+            --out-dir "$OUT_DIR" \
+            --source-repo "$SOURCE_REPO" \
+            --source-ref "$GITHUB_REF" \
+            --source-revision "$GITHUB_SHA" \
+            --version "$GITHUB_REF_NAME" \
+            --package-name "$PACKAGE_NAME" \
+            --public-base-url "$MINIO_PUBLIC_BASE_URL" \
+            --object-prefix "$object_prefix" \
+            --latest-object-key "$latest_key" \
+            --builder-metadata "$OUT_DIR/builder-metadata.json" \
+            --timings "$OUT_DIR/timings.json"
+
+      - name: Upload catalog blob to MinIO
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.MINIO_REGION || 'us-east-1' }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+          MINIO_FORCE_PATH_STYLE: ${{ vars.MINIO_FORCE_PATH_STYLE || 'true' }}
+        run: |
+          if [ "$MINIO_FORCE_PATH_STYLE" = "true" ]; then
+            aws configure set default.s3.addressing_style path
+          fi
+          upload_start_ms=$(date +%s%3N)
+          aws --endpoint-url "$MINIO_ENDPOINT" s3api put-object \
+            --bucket "$MINIO_BUCKET" \
+            --key "$OBJECT_ROOT/$GITHUB_REF_NAME/catalog.sqlite.gz" \
+            --body "$OUT_DIR/catalog.sqlite.gz" \
+            --content-type application/gzip
+          upload_end_ms=$(date +%s%3N)
+          echo "UPLOAD_MS=$((upload_end_ms - upload_start_ms))" >> "$GITHUB_ENV"
+
+      - name: Finalize metadata with upload timing
+        env:
+          MINIO_PUBLIC_BASE_URL: ${{ secrets.MINIO_PUBLIC_BASE_URL }}
+        run: |
+          object_prefix="$OBJECT_ROOT/$GITHUB_REF_NAME"
+          latest_key="$OBJECT_ROOT/latest.json"
+          python - <<'PY'
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          start = int(os.environ.get("WORKFLOW_START_MS", "0"))
+          timings = {
+              "checkout": 0,
+              "setup": int(os.environ.get("SETUP_MS", "0")),
+              "compress": int(os.environ.get("COMPRESS_MS", "0")),
+              "upload": int(os.environ.get("UPLOAD_MS", "0")),
+              "total": max(0, int(time.time() * 1000) - start) if start else 0,
+          }
+          Path(os.environ["OUT_DIR"], "timings.json").write_text(json.dumps(timings), encoding="utf-8")
+          PY
+          python -m scripts.catalog.write_artifact_metadata \
+            --out-dir "$OUT_DIR" \
+            --source-repo "$SOURCE_REPO" \
+            --source-ref "$GITHUB_REF" \
+            --source-revision "$GITHUB_SHA" \
+            --version "$GITHUB_REF_NAME" \
+            --package-name "$PACKAGE_NAME" \
+            --public-base-url "$MINIO_PUBLIC_BASE_URL" \
+            --object-prefix "$object_prefix" \
+            --latest-object-key "$latest_key" \
+            --builder-metadata "$OUT_DIR/builder-metadata.json" \
+            --timings "$OUT_DIR/timings.json"
+
+      - name: Upload immutable metadata to MinIO
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.MINIO_REGION || 'us-east-1' }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+          MINIO_FORCE_PATH_STYLE: ${{ vars.MINIO_FORCE_PATH_STYLE || 'true' }}
+        run: |
+          if [ "$MINIO_FORCE_PATH_STYLE" = "true" ]; then
+            aws configure set default.s3.addressing_style path
+          fi
+          aws --endpoint-url "$MINIO_ENDPOINT" s3api put-object \
+            --bucket "$MINIO_BUCKET" \
+            --key "$OBJECT_ROOT/$GITHUB_REF_NAME/manifest.json" \
+            --body "$OUT_DIR/manifest.json" \
+            --content-type application/json
+          aws --endpoint-url "$MINIO_ENDPOINT" s3api put-object \
+            --bucket "$MINIO_BUCKET" \
+            --key "$OBJECT_ROOT/$GITHUB_REF_NAME/build-metrics.json" \
+            --body "$OUT_DIR/build-metrics.json" \
+            --content-type application/json
+
+      - name: Upload latest pointer to MinIO
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.MINIO_REGION || 'us-east-1' }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+          MINIO_FORCE_PATH_STYLE: ${{ vars.MINIO_FORCE_PATH_STYLE || 'true' }}
+        run: |
+          if [ "$MINIO_FORCE_PATH_STYLE" = "true" ]; then
+            aws configure set default.s3.addressing_style path
+          fi
+          aws --endpoint-url "$MINIO_ENDPOINT" s3api put-object \
+            --bucket "$MINIO_BUCKET" \
+            --key "$OBJECT_ROOT/latest.json" \
+            --body "$OUT_DIR/latest.json" \
+            --content-type application/json
+
+      - name: Write job summary
+        env:
+          MINIO_PUBLIC_BASE_URL: ${{ secrets.MINIO_PUBLIC_BASE_URL }}
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          from pathlib import Path
+
+          out_dir = Path(os.environ["OUT_DIR"])
+          manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+          metrics = json.loads((out_dir / "build-metrics.json").read_text(encoding="utf-8"))
+          latest = json.loads((out_dir / "latest.json").read_text(encoding="utf-8"))
+          timings = metrics["timingsMs"]
+          print("## Catalog artifact")
+          print("")
+          print(f"- Source revision: `{manifest['sourceRevision']}`")
+          print(f"- Version: `{manifest['version']}`")
+          print(f"- Entries: `{manifest['validation']['entryCount']}`")
+          print(f"- Compressed bytes: `{manifest['catalog']['bytes']}`")
+          print(f"- Catalog sha256: `{manifest['catalog']['sha256']}`")
+          print(f"- Manifest URL: {latest['manifestUrl']}")
+          print("")
+          print("## Timings")
+          print("")
+          print("| Phase | Milliseconds |")
+          print("|---|---:|")
+          for key in ["setup", "validate", "buildCatalog", "compress", "upload", "total"]:
+              print(f"| {key} | {timings.get(key, 0)} |")
+          PY

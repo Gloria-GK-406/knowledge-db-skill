@@ -23,6 +23,7 @@ CORE_FIELDS = {
 CORE_PROFILE = "kb-core@2"
 ENTRY_SCHEMA = "kb-entry@2"
 PACKAGE_SCHEMA_FILE = "kb-package-schema.json"
+SKELETON_ROOT = Path(__file__).resolve().parents[1] / "assets" / "package-skeleton"
 MAX_WEIGHT = 1000
 SUPPORTED_NORMALIZERS = {"default", "keyword", "upper-case-code", "release-code"}
 
@@ -394,9 +395,21 @@ def is_safe_local_reference(value):
 
 def cmd_init(args):
     root = kb_root(args)
+    assets = tuple(sorted(path for path in SKELETON_ROOT.rglob("*") if path.is_file()))
+    conflicts = []
+    for asset in assets:
+        target = root / asset.relative_to(SKELETON_ROOT)
+        if target.exists() and target.read_bytes() != asset.read_bytes():
+            conflicts.append(target.relative_to(root).as_posix())
+    if conflicts:
+        for conflict in conflicts:
+            print(f"refusing to overwrite modified package asset: {conflict}", file=sys.stderr)
+        return 2
     for name in KB_DIRS: (root / name).mkdir(parents=True, exist_ok=True)
-    if not (root / PACKAGE_SCHEMA_FILE).exists():
-        (root / PACKAGE_SCHEMA_FILE).write_text(json.dumps({"schema": "kb-package-schema@2", "extends": "kb-core@2", "fields": {}}, indent=2) + "\n", encoding="utf-8")
+    for asset in assets:
+        target = root / asset.relative_to(SKELETON_ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists(): target.write_bytes(asset.read_bytes())
     print(f"Initialized {root}"); return 0
 
 
