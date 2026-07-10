@@ -76,9 +76,10 @@ def entry(kind, title, metadata=None, source=None, depends_on=None, status="acti
 
 class KbCliV2Tests(unittest.TestCase):
     def run_kb(self, root, *args, check=True):
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         result = subprocess.run(
             [sys.executable, str(KB), "--kb", str(root), *args],
-            capture_output=True, text=True, encoding="utf-8", errors="strict",
+            capture_output=True, text=True, encoding="utf-8", errors="strict", env=env,
         )
         if check and result.returncode:
             self.fail(f"kb {' '.join(args)} returned {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
@@ -145,6 +146,34 @@ class KbCliV2Tests(unittest.TestCase):
             self.assertIn("refusing to overwrite modified package asset: scripts/check_package.py", result.stderr)
             self.assertFalse((root / "kb-package-schema.json").exists())
             self.assertFalse((root / "source").exists())
+
+    def test_init_runs_the_materialized_checker_and_propagates_its_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write(root, "info/bad.md", "not frontmatter\n")
+
+            result = self.run_kb(root, "init", check=False)
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("missing YAML frontmatter", result.stderr)
+            self.assertTrue((root / "scripts" / "check_package.py").is_file())
+
+    def test_schema_and_scan_reject_the_same_invalid_field_contracts(self):
+        invalid_fields = {
+            "core conflict": ("title", {"type": "string", "multiple": False, "description": "Title", "filterable": True, "search": {"enabled": True, "weight": 1}}),
+            "invalid key": ("bad key", {"type": "string", "multiple": False, "description": "Bad", "filterable": True, "search": {"enabled": True, "weight": 1}}),
+            "unknown normalizer": ("country", {"type": "string", "multiple": True, "description": "Country", "filterable": True, "normalization": "unknown", "search": {"enabled": True, "weight": 1}}),
+            "excessive weight": ("country", {"type": "string", "multiple": True, "description": "Country", "filterable": True, "search": {"enabled": True, "weight": 1001}}),
+            "disabled weighted field": ("country", {"type": "string", "multiple": True, "description": "Country", "filterable": True, "search": {"enabled": False, "weight": 1}}),
+        }
+        for label, (field_name, definition) in invalid_fields.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); self.run_kb(root, "init")
+                (root / "kb-package-schema.json").write_text(json.dumps({
+                    "schema": "kb-package-schema@2", "extends": "kb-core@2", "fields": {field_name: definition},
+                }), encoding="utf-8")
+                self.assertEqual(2, self.run_kb(root, "schema", check=False).returncode)
+                self.assertEqual(2, self.run_kb(root, "scan", check=False).returncode)
 
     def test_scan_and_validate_delegate_to_the_generated_package_checker(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -290,7 +319,7 @@ class KbCliV2Tests(unittest.TestCase):
             schema_path.write_text(json.dumps(schema), encoding="utf-8")
             result = self.run_kb(root, "scan", check=False)
             self.assertEqual(2, result.returncode)
-            self.assertIn("must declare non-negative integer search.weight", result.stderr)
+            self.assertIn("must declare integer search.weight from 0 to 1000", result.stderr)
 
     def test_real_package_normalizers_apply_to_schema_search_and_filters(self):
         with tempfile.TemporaryDirectory() as temp:

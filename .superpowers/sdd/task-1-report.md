@@ -33,3 +33,10 @@ The copied verified workflow and its catalog helper smoke test still require the
 - The generated checker rejects package values outside the nested `metadata` mapping. Query behavior remains path-independent.
 - The static v2 fixture now contains the package checker; transient test packages copy the same skeleton checker.
 - Verification: `PYTHONIOENCODING=utf-8 py -3 -m unittest tests.test_kb_cli -v` passed (20/20). Against the SAP package, `kb schema`, `kb search 16T --filter country=JP`, and `kb scan` all passed; scan printed `OK: package validation passed`.
+
+## Final review fixes
+
+- The generated checker and local schema reader now share the same field contract: valid field keys, no core-name collision, string-only values, approved normalizers, a `0..1000` weight, disabled search requiring zero weight, and non-empty alias values.
+- `kb init` materializes all assets, then calls the generated checker and propagates any failure. `scan` uses an explicit UTF-8 Python child environment; test subprocesses do the same.
+- Regression coverage proves `schema` and `scan` both reject each contract violation, and that initialization reports a generated-checker failure for pre-existing invalid content.
+- Default Windows runner verification: `py -3 -m unittest discover -s tests -v` passed (22/22), without caller environment overrides.

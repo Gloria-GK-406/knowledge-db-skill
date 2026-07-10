@@ -2,6 +2,7 @@
 """Local CLI for kb-core@2 packages with package-owned metadata fields."""
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -127,7 +128,7 @@ def validate_field_definition(key, field):
     if not isinstance(weight, int) or isinstance(weight, bool) or not 0 <= weight <= MAX_WEIGHT: raise ValueError(f"field {key} search.weight must be an integer from 0 to {MAX_WEIGHT}")
     if not search.get("enabled", False) and weight != 0: raise ValueError(f"field {key} has a weight but is not searchable")
     aliases = field.get("aliases", {})
-    if not isinstance(aliases, dict) or any(not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value) for value in aliases.values()): raise ValueError(f"field {key} aliases must map values to string arrays")
+    if not isinstance(aliases, dict) or any(not isinstance(canonical, str) or not canonical.strip() or not isinstance(values, list) or not all(isinstance(item, str) and item.strip() for item in values) for canonical, values in aliases.items()): raise ValueError(f"field {key} aliases must map values to string arrays")
 
 
 def merged_schema(schema):
@@ -334,7 +335,7 @@ def cmd_scan(args):
     if not checker.is_file():
         print("missing generated package checker: scripts/check_package.py", file=sys.stderr); return 2
     try:
-        return subprocess.run([sys.executable, str(checker), "--kb", str(root)]).returncode
+        return subprocess.run([sys.executable, str(checker), "--kb", str(root)], env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}).returncode
     except OSError as exc:
         print(f"failed to run generated package checker: {exc}", file=sys.stderr); return 2
 
@@ -405,6 +406,8 @@ def cmd_init(args):
         target = root / asset.relative_to(SKELETON_ROOT)
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists(): target.write_bytes(asset.read_bytes())
+    result = cmd_scan(args)
+    if result: return result
     print(f"Initialized {root}"); return 0
 
 

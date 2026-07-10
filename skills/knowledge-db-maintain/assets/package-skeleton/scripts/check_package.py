@@ -16,6 +16,10 @@ import yaml
 CONTENT_ROOTS = ("info", "knowledge")
 LOCAL_REFERENCE_ROOTS = ("source/", "info/", "knowledge/")
 ISO_COUNTRY_DIRECTORY = re.compile(r"^[A-Z]{2}$")
+FIELD_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+CORE_FIELDS = {"schema", "kind", "title", "status", "updated", "source", "depends_on"}
+SUPPORTED_NORMALIZERS = {"default", "keyword", "upper-case-code", "release-code"}
+MAX_WEIGHT = 1000
 
 
 class PackageCheckError(ValueError):
@@ -52,7 +56,7 @@ def _load_package_fields(kb_root: Path) -> dict[str, dict[str, Any]]:
     if not isinstance(fields, dict):
         raise PackageCheckError(f"{schema_path}: fields must be a mapping")
     for name, definition in fields.items():
-        if not isinstance(name, str) or not isinstance(definition, dict):
+        if not isinstance(name, str) or not FIELD_KEY.fullmatch(name) or name in CORE_FIELDS or not isinstance(definition, dict):
             raise PackageCheckError(f"{schema_path}: each field must have a string name and mapping definition")
         if definition.get("type") != "string":
             raise PackageCheckError(f"{schema_path}: field {name!r} must have type 'string'")
@@ -65,13 +69,19 @@ def _load_package_fields(kb_root: Path) -> dict[str, dict[str, Any]]:
         search = definition.get("search")
         if not isinstance(search, dict) or not isinstance(search.get("enabled"), bool):
             raise PackageCheckError(f"{schema_path}: field {name!r} must declare search.enabled")
-        if not isinstance(search.get("weight"), int) or isinstance(search["weight"], bool) or search["weight"] < 0:
-            raise PackageCheckError(f"{schema_path}: field {name!r} must declare non-negative integer search.weight")
-        aliases = definition.get("aliases")
-        if aliases is not None and (
-            not isinstance(aliases, dict)
-            or not all(isinstance(key, str) and isinstance(values, list) and all(isinstance(value, str) for value in values)
-                       for key, values in aliases.items())
+        weight = search.get("weight")
+        if not isinstance(weight, int) or isinstance(weight, bool) or not 0 <= weight <= MAX_WEIGHT:
+            raise PackageCheckError(f"{schema_path}: field {name!r} must declare integer search.weight from 0 to {MAX_WEIGHT}")
+        if not search["enabled"] and weight != 0:
+            raise PackageCheckError(f"{schema_path}: field {name!r} cannot have a weight when search is disabled")
+        normalization = definition.get("normalization", "default")
+        if normalization not in SUPPORTED_NORMALIZERS:
+            raise PackageCheckError(f"{schema_path}: field {name!r} has unsupported normalization")
+        aliases = definition.get("aliases", {})
+        if not isinstance(aliases, dict) or not all(
+            isinstance(key, str) and key.strip() and isinstance(values, list)
+            and all(isinstance(value, str) and value.strip() for value in values)
+            for key, values in aliases.items()
         ):
             raise PackageCheckError(f"{schema_path}: field {name!r} aliases must map strings to string lists")
     return fields
