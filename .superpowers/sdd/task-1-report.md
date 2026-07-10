@@ -5,14 +5,17 @@
 - Added `skills/knowledge-db-maintain/assets/package-skeleton/` with the generic v2 package schema, package checker, catalog helpers, and catalog-artifact workflow.
 - Changed `kb init` to materialize the complete skeleton plus `source/`, `info/`, and `knowledge/` directories.
 - `init` is repeatable only when every existing generated asset is byte-identical; it preflights all assets and returns exit code 2 with one strict conflict per modified asset before it writes anything.
+- Empty `source/`, `info/`, and `knowledge/` directories are preserved with generated `.gitkeep` assets.
+- A directory placed where an asset file belongs is treated as a preflight conflict, with no traceback or partial materialization.
 - Replaced package-specific catalog test names and object paths with `example-org/example-knowledge-package`.
+- The workflow requires an explicit `KNOWLEDGE_SERVICE_REPOSITORY` repository variable and no longer defaults to an organization-specific service repository.
 
 ## TDD evidence
 
 1. Added initialization-success and modified-asset conflict tests in `tests/test_kb_cli.py`.
 2. RED: both failed because the prior command made only three directories and a minimal schema.
 3. GREEN: `py -3 -m unittest tests.test_kb_cli.KbCliV2Tests.test_init_materializes_the_complete_generic_package_skeleton tests.test_kb_cli.KbCliV2Tests.test_init_refuses_to_overwrite_a_changed_skeleton_asset -v` passed (2/2).
-4. Regression: with `PYTHONIOENCODING=utf-8`, `py -3 -m unittest tests.test_kb_cli -v` passed (17/17).
+4. Regression: with `PYTHONIOENCODING=utf-8`, `py -3 -m unittest tests.test_kb_cli -v` passed (18/18).
 5. Generated-package verification: `python -m unittest scripts.catalog.test_metadata -v` passed (2/2) after `kb init`; the generated `scripts/check_package.py --kb <temp-package>` also passed.
 
 ## Package-specific content audit

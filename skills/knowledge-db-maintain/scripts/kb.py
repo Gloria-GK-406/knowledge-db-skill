@@ -399,7 +399,7 @@ def cmd_init(args):
     conflicts = []
     for asset in assets:
         target = root / asset.relative_to(SKELETON_ROOT)
-        if target.exists() and target.read_bytes() != asset.read_bytes():
+        if target.exists() and (not target.is_file() or target.read_bytes() != asset.read_bytes()):
             conflicts.append(target.relative_to(root).as_posix())
     if conflicts:
         for conflict in conflicts:

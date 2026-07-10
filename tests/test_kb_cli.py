@@ -12,6 +12,9 @@ KB = ROOT / "skills" / "knowledge-db-maintain" / "scripts" / "kb.py"
 FIXTURE = ROOT / "tests" / "fixtures" / "metadata-schema-v2"
 SKELETON_ASSETS = (
     "kb-package-schema.json",
+    "source/.gitkeep",
+    "info/.gitkeep",
+    "knowledge/.gitkeep",
     "scripts/README.md",
     "scripts/check_package.py",
     "scripts/catalog/__init__.py",
@@ -126,6 +129,18 @@ class KbCliV2Tests(unittest.TestCase):
             self.assertEqual(2, result.returncode)
             self.assertIn("refusing to overwrite modified package asset: kb-package-schema.json", result.stderr)
             self.assertEqual('{"changed": true}\n', schema_path.read_text(encoding="utf-8"))
+
+    def test_init_refuses_a_directory_at_an_asset_path_without_writing_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scripts" / "check_package.py").mkdir(parents=True)
+
+            result = self.run_kb(root, "init", check=False)
+
+            self.assertEqual(2, result.returncode)
+            self.assertIn("refusing to overwrite modified package asset: scripts/check_package.py", result.stderr)
+            self.assertFalse((root / "kb-package-schema.json").exists())
+            self.assertFalse((root / "source").exists())
 
     def test_scan_accepts_declared_nested_metadata_and_required_core_roles(self):
         with tempfile.TemporaryDirectory() as temp:

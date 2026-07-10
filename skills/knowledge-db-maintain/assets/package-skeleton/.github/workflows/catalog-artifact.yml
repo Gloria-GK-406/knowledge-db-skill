@@ -12,8 +12,8 @@ env:
   PACKAGE_NAME: ${{ github.event.repository.name }}
   SOURCE_REPO: ${{ github.repository }}
   OBJECT_ROOT: ${{ github.repository }}
-  KNOWLEDGE_SERVICE_REPOSITORY: ${{ vars.KNOWLEDGE_SERVICE_REPOSITORY || 'dlrk-dev/knowledge-service' }}
-  KNOWLEDGE_SERVICE_REF: ${{ vars.KNOWLEDGE_SERVICE_REF || 'master' }}
+  KNOWLEDGE_SERVICE_REPOSITORY: ${{ vars.KNOWLEDGE_SERVICE_REPOSITORY }}
+  KNOWLEDGE_SERVICE_REF: ${{ vars.KNOWLEDGE_SERVICE_REF || 'main' }}
 
 jobs:
   build-catalog:
@@ -29,6 +29,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Require Knowledge Service builder configuration
+        run: |
+          if [ -z "$KNOWLEDGE_SERVICE_REPOSITORY" ]; then
+            echo "Repository variable KNOWLEDGE_SERVICE_REPOSITORY is required." >&2
+            exit 2
+          fi
 
       - name: Check out Knowledge Service builder source
         uses: actions/checkout@v4
