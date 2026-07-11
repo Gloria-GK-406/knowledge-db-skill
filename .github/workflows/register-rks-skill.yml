@@ -1,0 +1,102 @@
+name: Register RKS skill group
+
+on:
+  push:
+    branches: [main]
+    paths: [.rks-skill-registration.json]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Register or unregister the group declared in .rks-skill-registration.json
+        required: true
+        default: register
+        type: choice
+        options: [register, unregister]
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_REPOSITORY: ${{ vars.RKS_SKILL_MANAGER_REPOSITORY }}
+      REGISTRY_BASE_BRANCH: ${{ vars.RKS_SKILL_MANAGER_BASE_BRANCH || 'main' }}
+      OPERATION: ${{ inputs.operation || 'register' }}
+      GH_TOKEN: ${{ secrets.RKS_SKILL_MANAGER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update the manager catalogue checkout
+        shell: bash
+        run: |
+          test -n "$REGISTRY_REPOSITORY"
+          test -n "$GH_TOKEN"
+          gh repo clone "$REGISTRY_REPOSITORY" registry -- --branch "$REGISTRY_BASE_BRANCH" --depth 1
+          GROUP_ID="$(python -c 'import json; print(json.load(open(".rks-skill-registration.json", encoding="utf-8"))["group"]["id"])')"
+          BRANCH="skill-registration/$GROUP_ID"
+          git -C registry config user.name "rks-skill-registration[bot]"
+          git -C registry config user.email "rks-skill-registration[bot]@users.noreply.github.com"
+          git -C registry fetch origin "$BRANCH" || true
+          git -C registry switch -C "$BRANCH" "origin/$REGISTRY_BASE_BRANCH"
+          echo "GROUP_ID=$GROUP_ID" >> "$GITHUB_ENV"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Apply this repository's registration declaration
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(Path('.rks-skill-registration.json').read_text(encoding='utf-8'))
+          group = manifest['group']
+          group_id = group['id']
+          root = Path('registry/skills/skill-search-install/references')
+          detail_directory = root / 'skills'
+          list_path = root / 'list.json'
+          detail_path = detail_directory / f'{group_id}.json'
+          root.mkdir(parents=True, exist_ok=True)
+          detail_directory.mkdir(parents=True, exist_ok=True)
+
+          catalogue = json.loads(list_path.read_text(encoding='utf-8')) if list_path.exists() else {'version': 1, 'groups': []}
+          catalogue['groups'] = [item for item in catalogue['groups'] if item['id'] != group_id]
+
+          if os.environ['OPERATION'] == 'unregister':
+              detail_path.unlink(missing_ok=True)
+          else:
+              catalogue['groups'].append({
+                  'id': group_id,
+                  'name': group['name'],
+                  'capabilities': group['capabilities'],
+              })
+              detail = {
+                  'id': group_id,
+                  'name': group['name'],
+                  'description': group['description'],
+                  'repository': os.environ['GITHUB_REPOSITORY'],
+                  'skills': manifest['skills'],
+              }
+              detail_path.write_text(json.dumps(detail, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          catalogue['groups'].sort(key=lambda item: item['id'])
+          list_path.write_text(json.dumps(catalogue, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Create or update the registration pull request
+        shell: bash
+        run: |
+          git -C registry add skills/skill-search-install/references
+          if git -C registry diff --cached --quiet; then
+            echo "No catalogue change is required."
+            exit 0
+          fi
+          git -C registry commit -m "chore(registry): sync $GROUP_ID"
+          git -C registry push --force-with-lease --set-upstream origin "$BRANCH"
+          PR_URL="$(gh pr list --repo "$REGISTRY_REPOSITORY" --head "$BRANCH" --state open --json url --jq '.[0].url')"
+          if [ -n "$PR_URL" ]; then
+            echo "Registration pull request already exists: $PR_URL"
+          else
+            gh pr create --repo "$REGISTRY_REPOSITORY" --base "$REGISTRY_BASE_BRANCH" --head "$BRANCH" --title "chore(registry): sync $GROUP_ID" --body "Synchronize registration from $GITHUB_REPOSITORY using operation: $OPERATION."
+          fi
