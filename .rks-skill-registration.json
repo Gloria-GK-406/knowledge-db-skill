@@ -13,14 +13,12 @@
     {
       "id": "knowledge-db-use",
       "name": "Knowledge DB Use",
-      "description": "Consume a kb-core@2 local Markdown knowledge base by discovering package metadata, searching with weighted generic fields, reading entries, and tracing provenance without modifying files.",
-      "skillPath": "skills/knowledge-db-use"
+      "description": "Consume a kb-core@2 local Markdown knowledge base by discovering package metadata, searching with weighted generic fields, reading entries, and tracing provenance without modifying files."
     },
     {
       "id": "knowledge-db-maintain",
       "name": "Knowledge DB Maintain",
-      "description": "Maintain a kb-core@2 local Markdown knowledge base with package-defined metadata, self-contained artifact validation, generic filters, provenance tracing, and metadata-aware search.",
-      "skillPath": "skills/knowledge-db-maintain"
+      "description": "Maintain a kb-core@2 local Markdown knowledge base with package-defined metadata, self-contained artifact validation, generic filters, provenance tracing, and metadata-aware search."
     }
   ]
 }
