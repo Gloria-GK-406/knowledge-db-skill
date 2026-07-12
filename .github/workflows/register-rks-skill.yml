@@ -3,7 +3,9 @@ name: Register RKS skill group
 on:
   push:
     branches: [main]
-    paths: [.rks-skill-registration.json]
+    paths:
+      - .rks-skill-registration.json
+      - .github/workflows/register-rks-skill.yml
   workflow_dispatch:
     inputs:
       operation:
@@ -33,6 +35,7 @@ jobs:
           test -n "$REGISTRY_REPOSITORY"
           test -n "$GH_TOKEN"
           gh repo clone "$REGISTRY_REPOSITORY" registry -- --branch "$REGISTRY_BASE_BRANCH" --depth 1
+          git -C registry remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REGISTRY_REPOSITORY}.git"
           GROUP_ID="$(python -c 'import json; print(json.load(open(".rks-skill-registration.json", encoding="utf-8"))["group"]["id"])')"
           BRANCH="skill-registration/$GROUP_ID"
           git -C registry config user.name "rks-skill-registration[bot]"
