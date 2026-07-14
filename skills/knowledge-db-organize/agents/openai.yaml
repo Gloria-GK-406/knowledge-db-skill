@@ -1,0 +1,4 @@
+interface:
+  display_name: "整理知识库层级"
+  short_description: "按一致抽象层级合并并隔离知识库目录"
+  default_prompt: "使用 $knowledge-db-organize 重新整理这个知识库，使每层目录保持同一抽象层级。"
