@@ -17,6 +17,8 @@ SKELETON_ASSETS = (
     "source/.gitkeep",
     "info/.gitkeep",
     "knowledge/.gitkeep",
+    "templates/info.md",
+    "templates/knowledge.md",
     "scripts/README.md",
     "scripts/check_package.py",
     "scripts/test_check_package.py",
@@ -74,7 +76,11 @@ def entry(kind, title, metadata=None, source=None, depends_on=None, status="acti
                 core += [f"    - {item}" for item in value]
             else:
                 core.append(f"  {key}: {value}")
-    return "---\n" + "\n".join(core) + "\n---\n\n# " + title + "\n\nBody text.\n"
+    if kind == "info":
+        body = f"# {title}\n\n## Scope\n\nScope.\n\n## Facts\n\nBody text.\n\n## Notes\n\nNotes.\n"
+    else:
+        body = f"# {title}\n\n## Problem and Context\n\nProblem.\n\n## Conclusion\n\nConclusion.\n\n## Limits\n\nLimits.\n\n## Reasoning\n\nReasoning.\n"
+    return "---\n" + "\n".join(core) + "\n---\n\n" + body
 
 
 class KbCliV2Tests(unittest.TestCase):
@@ -146,6 +152,176 @@ class KbCliV2Tests(unittest.TestCase):
             workflow = (root / ".github" / "workflows" / "catalog-artifact.yml").read_text(encoding="utf-8")
             self.assertNotIn("knowledge-service", workflow)
             self.assertIn("Initialized", self.run_kb(root, "init").stdout)
+
+    def test_new_renders_canonical_info_and_knowledge_templates_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.run_kb(root, "init")
+            self.write(root, "source/official.md", "official")
+
+            info = self.run_kb(
+                root,
+                "new",
+                "info",
+                "sap/example.md",
+                "--title",
+                "Example: API",
+                "--source",
+                "source/official.md",
+                "--source",
+                "https://example.com/reference",
+            )
+            self.assertIn("Created info/sap/example.md", info.stdout)
+            info_text = (root / "info" / "sap" / "example.md").read_text(encoding="utf-8")
+            self.assertIn('title: "Example: API"', info_text)
+            self.assertIn("status: draft", info_text)
+            self.assertIn("# Example: API\n\n## Scope\n", info_text)
+            self.assertLess(info_text.index("## Scope"), info_text.index("## Facts"))
+            self.assertLess(info_text.index("## Facts"), info_text.index("## Notes"))
+            self.assertIn('  - "source/official.md"', info_text)
+            self.assertIn('  - "https://example.com/reference"', info_text)
+
+            knowledge = self.run_kb(
+                root,
+                "new",
+                "knowledge",
+                "guidance/example.md",
+                "--title",
+                "Example guidance",
+                "--depends-on",
+                "info/sap/example.md",
+                "--status",
+                "active",
+            )
+            self.assertIn("Created knowledge/guidance/example.md", knowledge.stdout)
+            knowledge_text = (root / "knowledge" / "guidance" / "example.md").read_text(encoding="utf-8")
+            self.assertIn("status: active", knowledge_text)
+            headings = ["## Problem and Context", "## Conclusion", "## Limits", "## Reasoning"]
+            self.assertEqual(headings, [line for line in knowledge_text.splitlines() if line.startswith("## ")])
+
+            overwrite = self.run_kb(
+                root,
+                "new",
+                "info",
+                "sap/example.md",
+                "--title",
+                "Replacement",
+                "--source",
+                "source/official.md",
+                check=False,
+            )
+            self.assertEqual(2, overwrite.returncode)
+            self.assertIn("refusing to overwrite", overwrite.stderr)
+
+    def test_new_rejects_unsafe_paths_and_missing_or_damaged_templates(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.run_kb(root, "init")
+
+            unsafe = self.run_kb(
+                root,
+                "new",
+                "info",
+                "../escape.md",
+                "--title",
+                "Escape",
+                "--source",
+                "https://example.com",
+                check=False,
+            )
+            self.assertEqual(2, unsafe.returncode)
+            self.assertIn("safe relative .md path", unsafe.stderr)
+
+            for path in ("\\rooted.md", "D:escape.md"):
+                with self.subTest(path=path):
+                    escaped = self.run_kb(
+                        root,
+                        "new",
+                        "info",
+                        path,
+                        "--title",
+                        "Escape",
+                        "--source",
+                        "https://example.com",
+                        check=False,
+                    )
+                    self.assertEqual(2, escaped.returncode)
+                    self.assertIn("safe relative .md path", escaped.stderr)
+
+            (root / "templates" / "info.md").write_text("# no placeholders\n", encoding="utf-8")
+            damaged = self.run_kb(
+                root,
+                "new",
+                "info",
+                "example.md",
+                "--title",
+                "Example",
+                "--source",
+                "https://example.com",
+                check=False,
+            )
+            self.assertEqual(2, damaged.returncode)
+            self.assertIn("invalid entry template", damaged.stderr)
+
+    def test_new_quotes_provenance_and_preserves_titles_ending_in_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.run_kb(root, "init")
+            source = "https://example.com/reference: detail#fragment"
+
+            self.run_kb(
+                root,
+                "new",
+                "info",
+                "language/c-sharp.md",
+                "--title",
+                "C#",
+                "--source",
+                source,
+            )
+
+            rendered = (root / "info" / "language" / "c-sharp.md").read_text(encoding="utf-8")
+            self.assertIn('  - "https://example.com/reference: detail#fragment"', rendered)
+            self.assertIn("# C#\n", rendered)
+            self.assertIn("OK", self.run_kb(root, "scan").stdout)
+            self.assertIn("# C#", self.run_kb(root, "read", "info/language/c-sharp.md").stdout)
+
+            empty = self.run_kb(
+                root,
+                "new",
+                "info",
+                "empty.md",
+                "--title",
+                "Empty",
+                "--source",
+                " ",
+                check=False,
+            )
+            self.assertEqual(2, empty.returncode)
+            self.assertIn("provenance values", empty.stderr)
+
+    def test_new_does_not_recursively_expand_placeholder_text_in_values(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.run_kb(root, "init")
+
+            self.run_kb(
+                root,
+                "new",
+                "info",
+                "literal-placeholders.md",
+                "--title",
+                "{{STATUS}}",
+                "--source",
+                "https://example.com/{{TITLE_MARKDOWN}}",
+            )
+
+            rendered = (root / "info" / "literal-placeholders.md").read_text(encoding="utf-8")
+            self.assertIn('title: "{{STATUS}}"', rendered)
+            self.assertIn("status: draft", rendered)
+            self.assertIn("# {{STATUS}}", rendered)
+            self.assertIn('  - "https://example.com/{{TITLE_MARKDOWN}}"', rendered)
+            self.assertIn("OK", self.run_kb(root, "scan").stdout)
 
     def test_init_refuses_to_overwrite_a_changed_skeleton_asset(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -376,6 +552,19 @@ class KbCliV2Tests(unittest.TestCase):
             self.assertEqual(1, read.returncode); self.assertIn("metadata.country must be an array", read.stderr)
             self.assertEqual(1, trace.returncode); self.assertIn("metadata.country must be an array", trace.stderr)
 
+    def test_queries_and_read_reject_noncanonical_entry_bodies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.make_package(root)
+            invalid = entry("info", "Invalid body", {"country": ["JP"]}, ["source/official.md"]).replace("## Notes\n\nNotes.\n", "")
+            self.write(root, "info/invalid-body.md", invalid)
+
+            listed = self.run_kb(root, "list", "info", "--filter", "country=JP").stdout
+            read = self.run_kb(root, "read", "info/invalid-body.md", check=False)
+
+            self.assertNotIn("info/invalid-body.md", listed)
+            self.assertEqual(1, read.returncode)
+            self.assertIn("canonical info sections", read.stderr)
+
     def test_scan_rejects_boolean_keyword_weights(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); self.make_package(root)
@@ -423,6 +612,18 @@ metadata:
 ---
 
 # Intercompany
+
+## Scope
+
+Scope.
+
+## Facts
+
+Facts.
+
+## Notes
+
+Notes.
 """)
             self.assertIn("OK", self.run_kb(root, "scan").stdout)
             self.assertIn("info/16T.md", self.run_kb(root, "search", "16T", "--filter", "country=jp").stdout)

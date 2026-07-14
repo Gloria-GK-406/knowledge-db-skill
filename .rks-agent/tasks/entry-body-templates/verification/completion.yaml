@@ -1,0 +1,14 @@
+decision: pass
+claim: Canonical info and knowledge entry templates are documented, scaffolded, safely rendered, and consistently validated.
+evidence:
+  - condition: SC-1
+    evidence: skills/knowledge-db-maintain/SKILL.md defines both canonical bodies and section semantics; quick_validate.py reports Skill is valid.
+  - condition: SC-2
+    evidence: Repository tests cover kb init assets and kb new for both kinds, repeated provenance, status, safe paths, placeholder safety, and overwrite refusal.
+  - condition: SC-3
+    evidence: Package skeleton tests accept canonical bodies and reject title mismatch plus missing, duplicate, reordered, unexpected, or empty H1/H2 structures.
+  - condition: SC-4
+    evidence: Fresh repository suite passed 28 tests and package skeleton suite passed 8 tests.
+  - condition: SC-5
+    evidence: quick_validate.py passed, registration JSON parsed, git diff --check passed, and independent review returned approved.
+unverified_conditions: []

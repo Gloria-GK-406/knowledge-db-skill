@@ -15,4 +15,14 @@ metadata:
 
 # Brazil Asset Tax Credit
 
+## Scope
+
+Brazil-specific capability scope.
+
+## Facts
+
 Brazil-specialized capability content.
+
+## Notes
+
+Extracted from the official fixture source.

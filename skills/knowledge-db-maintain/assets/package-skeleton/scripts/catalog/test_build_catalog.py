@@ -56,7 +56,17 @@ metadata:
 
 # Example
 
+## Scope
+
+Example scope.
+
+## Facts
+
 Body text.
+
+## Notes
+
+Example notes.
 """,
                 encoding="utf-8",
             )
@@ -76,7 +86,21 @@ metadata:
 
 # Derived
 
+## Problem and Context
+
+Problem.
+
+## Conclusion
+
 Conclusion.
+
+## Limits
+
+Limits.
+
+## Reasoning
+
+Reasoning.
 """,
                 encoding="utf-8",
             )
@@ -171,7 +195,19 @@ metadata:
     - priority
 ---
 
+# Many values
+
+## Scope
+
+Scope.
+
+## Facts
+
 Body.
+
+## Notes
+
+Notes.
 """,
                 encoding="utf-8",
             )

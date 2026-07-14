@@ -1,0 +1,10 @@
+schema_version: "0.2"
+kind: rks-sdd-execution
+task: { contract: ./TaskContract.md, contract_revision: 1 }
+routing: { workflow: single-spec-workflow, skeleton: sdd-lite, profile: code-feature, selection_mode: recommended, execution_mode: auto }
+artifacts: { spec: ./spec.md, task_reports: ./task-reports/, reviews: ./reviews/, verification: ./verification/, result: ./spec-result.md }
+stages:
+  - { id: spec, produces: [spec], skills: [writing-specs], gate: none, completion: "spec covers the TaskContract" }
+  - { id: implementation, produces: [implementation, task-reports], skills: [executing-tasks, test-driven-development], gate: auto, completion: "feature implementation and required tests are complete" }
+  - { id: review, produces: [change-review], skills: [reviewing-code], gate: auto, completion: "complete change is approved with no unresolved blocking findings" }
+  - { id: verification, produces: [completion-evidence], skills: [verification-before-completion], gate: auto, completion: "fresh evidence proves every TaskContract success condition" }

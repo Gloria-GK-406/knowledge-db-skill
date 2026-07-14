@@ -1,6 +1,6 @@
 ---
 name: knowledge-db-maintain
-description: Use when maintaining a kb-core@2 local Markdown knowledge base with package-defined metadata, self-contained artifact validation, generic filters, provenance tracing, or metadata-aware search.
+description: Use when creating or maintaining a kb-core@2 local Markdown knowledge base with canonical info and knowledge entry templates, package-defined metadata, self-contained validation, generic filters, provenance tracing, or metadata-aware search.
 ---
 
 # Knowledge DB Maintain
@@ -18,6 +18,45 @@ Keep the three layers semantically distinct, not merely linked by frontmatter:
 | `knowledge/` | Reusable guidance derived from info entries: how to combine APIs to implement a feature, recommended execution routes, decision criteria, tradeoffs, and operational constraints. Declare every dependency with `depends_on`. | New facts without info support, raw evidence, or a restatement of API reference material. |
 
 Write in this order: add or update `source` first, extract only supported facts into `info`, then create or revise `knowledge` only when the info supports a reusable conclusion. Do not create knowledge merely because a source or info entry changed. Keep unresolved questions and planned experiments out of knowledge until evidence supports a conclusion.
+
+## Entry Body Contract
+
+Use exactly one H1 equal to the frontmatter `title`. Keep the required H2 headings in the shown order; add detail only with H3 or lower headings. Heading-like text inside fenced code blocks does not count.
+
+Write every `info` body as:
+
+```markdown
+# <title>
+
+## Scope
+<!-- Coverage, applicability, and explicit exclusions. -->
+
+## Facts
+<!-- Objective facts supported by source. -->
+
+## Notes
+<!-- Source positioning, extraction method, conflicts, uncertainty, and limits. -->
+```
+
+Write every `knowledge` body as:
+
+```markdown
+# <title>
+
+## Problem and Context
+<!-- Reusable problem, applicability, and prerequisites. -->
+
+## Conclusion
+<!-- Derived guidance, recommendation, or decision rule. -->
+
+## Limits
+<!-- Non-applicability, risks, version constraints, and unknowns. -->
+
+## Reasoning
+<!-- How depends_on info supports the conclusion. -->
+```
+
+Do not introduce new facts in `knowledge`; put supporting facts in `info` first. The generated package checker rejects missing, duplicated, additional, or reordered H1/H2 headings.
 
 ## V2 Package Contract
 
@@ -72,6 +111,8 @@ Run `kb schema` before constructing a query; `kb schema --json` returns the comp
 
 ```text
 kb scan
+kb new info sap/api.md --title "API behavior" --source source/sap/api.md
+kb new knowledge sap/api-guidance.md --title "API guidance" --depends-on info/sap/api.md
 kb search "intercompany" --filter country=JP
 kb search --filter country=JP --filter country=DE --filter capability=16T
 kb list info --filter country=BR
@@ -93,7 +134,9 @@ validation semantics come from frontmatter and `kb-package-schema.json`, never a
 
 Run `kb init` in an empty package root to materialize the generic schema, empty
 `source/`, `info/`, and `knowledge/` roots, package checker, catalog helpers, and artifact
-workflow. It is safe to rerun only while generated assets remain byte-identical; it refuses
+workflow. It also creates `templates/info.md` and `templates/knowledge.md`; use `kb new` to
+render them with core frontmatter and the canonical body structure. It is safe to rerun only
+while generated assets remain byte-identical; it refuses
 to overwrite changed files or directory collisions. The generated Python producer validates
 the package and builds `kb-catalog@2` SQLite locally; its CI needs only package-local scripts,
 PyYAML, and the repository's MinIO publication secrets. It never checks out or imports a

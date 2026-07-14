@@ -200,6 +200,7 @@ def _parse_entry(path: Path, kb_root: Path, fields: dict[str, dict[str, Any]], p
             if not candidate.is_file():
                 raise CatalogBuildError(f"{path}: local reference does not exist: {reference}")
     body = pieces[2]
+    _validate_body_contract(path, kind, title.strip(), body)
     frontmatter_lines = len(pieces[0].splitlines()) + len(pieces[1].splitlines()) + 2
     body_lines = [
         {"line": frontmatter_lines + index + 1, "text": line}
@@ -219,6 +220,48 @@ def _parse_entry(path: Path, kb_root: Path, fields: dict[str, dict[str, Any]], p
         "depends_on": provenance if kind == "knowledge" else [],
         "metadata": normalized_metadata,
     }
+
+
+ENTRY_BODY_SECTIONS = {
+    "info": ["Scope", "Facts", "Notes"],
+    "knowledge": ["Problem and Context", "Conclusion", "Limits", "Reasoning"],
+}
+
+
+def _body_headings(body: str) -> list[tuple[int, str]]:
+    headings: list[tuple[int, str]] = []
+    fence: tuple[str, int] | None = None
+    for line in body.splitlines():
+        stripped = line.lstrip(" ")
+        if len(line) - len(stripped) > 3:
+            continue
+        fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_match:
+            marker = fence_match.group(1)
+            if fence is None:
+                fence = (marker[0], len(marker))
+            elif marker[0] == fence[0] and len(marker) >= fence[1]:
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        heading = re.match(r"^(#{1,6})(?:[ \t]+(.*)|[ \t]*)$", stripped)
+        if heading and len(heading.group(1)) <= 2:
+            text = (heading.group(2) or "").strip()
+            text = re.sub(r"[ \t]+#+[ \t]*$", "", text).strip()
+            headings.append((len(heading.group(1)), text))
+    return headings
+
+
+def _validate_body_contract(path: Path, kind: str, title: str, body: str) -> None:
+    headings = _body_headings(body)
+    h1 = [text for level, text in headings if level == 1]
+    if h1 != [title]:
+        raise CatalogBuildError(f"{path}: canonical body requires exactly one H1 equal to title {title!r}")
+    h2 = [text for level, text in headings if level == 2]
+    expected = ENTRY_BODY_SECTIONS[kind]
+    if h2 != expected:
+        raise CatalogBuildError(f"{path}: canonical {kind} sections must be exactly, in order: {', '.join(expected)}")
 
 
 def _validate_package(kb_root: Path, package_name: str, revision: str) -> tuple[dict[str, dict[str, Any]], str, str, list[dict[str, Any]], list[dict[str, str]]]:

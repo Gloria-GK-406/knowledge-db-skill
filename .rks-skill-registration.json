@@ -6,7 +6,7 @@
     "capabilities": [
       "Search and read local Markdown knowledge bases with schema-aware filters",
       "Trace knowledge provenance from knowledge to info to source",
-      "Maintain and validate kb-core@2 packages with metadata-aware tooling"
+      "Create canonical info and knowledge entries, then maintain and validate kb-core@2 packages"
     ]
   },
   "skills": [
@@ -18,7 +18,7 @@
     {
       "id": "knowledge-db-maintain",
       "name": "Knowledge DB Maintain",
-      "description": "Maintain a kb-core@2 local Markdown knowledge base with package-defined metadata, self-contained artifact validation, generic filters, provenance tracing, and metadata-aware search."
+      "description": "Create and maintain a kb-core@2 local Markdown knowledge base with canonical entry templates, package-defined metadata, self-contained validation, generic filters, provenance tracing, and metadata-aware search."
     }
   ]
 }

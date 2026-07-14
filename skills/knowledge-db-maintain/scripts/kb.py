@@ -34,6 +34,10 @@ NORMALIZERS_BY_TYPE = {
     "boolean": {"boolean"},
     "date": {"date"},
 }
+ENTRY_BODY_SECTIONS = {
+    "info": ["Scope", "Facts", "Notes"],
+    "knowledge": ["Problem and Context", "Conclusion", "Limits", "Reasoning"],
+}
 
 
 def kb_root(args): return Path(args.kb).resolve()
@@ -53,7 +57,10 @@ def split_frontmatter(text):
 
 def parse_scalar(value):
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'": return value[1:-1]
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try: return json.loads(value)
+        except json.JSONDecodeError: return value[1:-1]
+    if len(value) >= 2 and value[0] == value[-1] == "'": return value[1:-1].replace("''", "'")
     if value in {"true", "True", "TRUE"}: return True
     if value in {"false", "False", "FALSE"}: return False
     if value in {"null", "Null", "NULL", "~"}: return None
@@ -83,7 +90,7 @@ def parse_simple_yaml(yaml_text):
         if not match: raise ValueError(f"Unsupported YAML line: {raw}")
         key, value = match.groups(); value = value or ""
         if key == "metadata":
-            if value: raise ValueError("metadata must be a mapping")
+            if value not in {"", "{}"}: raise ValueError("metadata must be a mapping")
             data[key] = {}; current, nested = key, None
         else:
             data[key] = [] if value == "" else parse_scalar(value); current, nested = key, None
@@ -155,7 +162,27 @@ def parse_date(value):
     except ValueError: return None
 
 
-def validate_entry(root, kind, path, data, schema):
+def body_headings(body):
+    headings, fence = [], None
+    for line in body.splitlines():
+        stripped = line.lstrip(" ")
+        if len(line) - len(stripped) > 3: continue
+        fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+        if fence_match:
+            marker = fence_match.group(1)
+            if fence is None: fence = (marker[0], len(marker))
+            elif marker[0] == fence[0] and len(marker) >= fence[1]: fence = None
+            continue
+        if fence is not None: continue
+        heading = re.match(r"^(#{1,6})(?:[ \t]+(.*)|[ \t]*)$", stripped)
+        if heading and len(heading.group(1)) <= 2:
+            text = (heading.group(2) or "").strip()
+            text = re.sub(r"[ \t]+#+[ \t]*$", "", text).strip()
+            headings.append((len(heading.group(1)), text))
+    return headings
+
+
+def validate_entry(root, kind, path, data, schema, body=""):
     problems, rel = [], display_path(root, path)
     def error(message): problems.append(f"{rel}: {message}")
     for key in sorted(set(data) - (set(CORE_FIELDS) | {"metadata"})):
@@ -205,6 +232,13 @@ def validate_entry(root, kind, path, data, schema):
         for dep in list_value(data.get("depends_on")):
             if is_web_source(dep) or not dep.startswith("info/") or not dep.endswith(".md") or not is_safe_local_reference(dep): error(f"depends_on must point to info/**/*.md: {dep}")
             elif not (root / dep).exists(): error(f"missing dependency: {dep}")
+    headings = body_headings(body)
+    h1 = [text for level, text in headings if level == 1]
+    title = data.get("title")
+    if isinstance(title, str) and h1 != [title.strip()]: error(f"canonical body requires exactly one H1 equal to title {title.strip()!r}")
+    h2 = [text for level, text in headings if level == 2]
+    expected = ENTRY_BODY_SECTIONS.get(kind)
+    if expected is not None and h2 != expected: error(f"canonical {kind} sections must be exactly, in order: {', '.join(expected)}")
     return problems
 
 
@@ -343,8 +377,8 @@ def cmd_list(args):
     except ValueError as exc: print(str(exc), file=sys.stderr); return 2
     count = 0
     for _kind, path in iter_entries(root, args.kind):
-        data, _body, error = read_entry(path)
-        if error or validate_entry(root, _kind, path, data, schema):
+        data, body, error = read_entry(path)
+        if error or validate_entry(root, _kind, path, data, schema, body):
             continue
         if (not args.status or data.get("status") == args.status) and matches_filters(data, filters, schema):
             count += 1; print(f"{display_path(root, path)} - {data.get('title', '(untitled)')}")
@@ -361,7 +395,7 @@ def cmd_search(args):
     results = []
     for _kind, path in iter_entries(root, args.kind):
         data, body, error = read_entry(path)
-        if error or validate_entry(root, _kind, path, data, schema) or not matches_filters(data, filters, schema): continue
+        if error or validate_entry(root, _kind, path, data, schema, body) or not matches_filters(data, filters, schema): continue
         if terms and not entry_matches_terms(root, path, data, body, terms, schema): continue
         results.append((-entry_score(root, path, data, body, terms, schema), display_path(root, path), data))
     for _score, rel, data in sorted(results): print(f"{rel} - {data.get('title', '(untitled)')}")
@@ -387,7 +421,7 @@ def cmd_read(args):
     data, body, error = read_entry(path)
     if error:
         print(error, file=sys.stderr); return 1
-    problems = validate_entry(root, entry_kind_for_path(root, path), path, data, schema)
+    problems = validate_entry(root, entry_kind_for_path(root, path), path, data, schema, body)
     if problems:
         print("; ".join(problems), file=sys.stderr); return 1
     text = read_utf8_text(path); yaml_text, body = split_frontmatter(text)
@@ -399,9 +433,9 @@ def cmd_trace(args):
     if not path.exists(): print(f"Path not found: {args.path}", file=sys.stderr); return 2
     try: schema = load_schema(root)
     except ValueError as exc: print(str(exc), file=sys.stderr); return 2
-    data, _body, error = read_entry(path)
+    data, body, error = read_entry(path)
     if error: print(error, file=sys.stderr); return 1
-    problems = validate_entry(root, entry_kind_for_path(root, path), path, data, schema)
+    problems = validate_entry(root, entry_kind_for_path(root, path), path, data, schema, body)
     if problems:
         print("; ".join(problems), file=sys.stderr); return 1
     print(f"{args.path} - {data.get('title', '(untitled)')}")
@@ -430,7 +464,10 @@ def is_safe_local_reference(value):
 
 def cmd_init(args):
     root = kb_root(args)
-    assets = tuple(sorted(path for path in SKELETON_ROOT.rglob("*") if path.is_file()))
+    assets = tuple(sorted(
+        path for path in SKELETON_ROOT.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    ))
     conflicts = []
     for asset in assets:
         target = root / asset.relative_to(SKELETON_ROOT)
@@ -450,6 +487,52 @@ def cmd_init(args):
     print(f"Initialized {root}"); return 0
 
 
+def cmd_new(args):
+    root = kb_root(args)
+    relative = Path(args.path.replace("\\", "/"))
+    layer_root = (root / args.kind).resolve()
+    if relative.drive or relative.root or relative.is_absolute() or relative == Path(".") or ".." in relative.parts or relative.suffix.lower() != ".md":
+        print("entry path must be a safe relative .md path", file=sys.stderr); return 2
+    if relative.parts[0] in KB_DIRS:
+        print(f"entry path is relative to {args.kind}/; omit the layer prefix", file=sys.stderr); return 2
+    target = (layer_root / relative).resolve()
+    try: target.relative_to(layer_root)
+    except ValueError:
+        print("entry path must be a safe relative .md path", file=sys.stderr); return 2
+    if target.exists():
+        print(f"refusing to overwrite existing path: {display_path(root, target)}", file=sys.stderr); return 2
+    if "\n" in args.title or "\r" in args.title or not args.title.strip():
+        print("title must be non-empty and single-line", file=sys.stderr); return 2
+    template_path = root / "templates" / f"{args.kind}.md"
+    if not template_path.is_file():
+        print(f"missing entry template: {display_path(root, template_path)}", file=sys.stderr); return 2
+    provenance = args.source if args.kind == "info" else args.depends_on
+    if any(not value.strip() or "\n" in value or "\r" in value for value in provenance):
+        print("provenance values must be non-empty and single-line", file=sys.stderr); return 2
+    replacements = {
+        "{{TITLE_YAML}}": json.dumps(args.title.strip(), ensure_ascii=False),
+        "{{TITLE_MARKDOWN}}": args.title.strip(),
+        "{{STATUS}}": args.status,
+        "{{UPDATED}}": date.today().isoformat(),
+        "{{PROVENANCE}}": "\n".join(f"  - {json.dumps(value.strip(), ensure_ascii=False)}" for value in provenance),
+    }
+    template = read_utf8_text(template_path)
+    invalid = [token for token in replacements if template.count(token) != 1]
+    if invalid:
+        print(f"invalid entry template; expected each placeholder exactly once: {', '.join(invalid)}", file=sys.stderr); return 2
+    placeholder_pattern = re.compile("|".join(re.escape(token) for token in replacements))
+    rendered = placeholder_pattern.sub(lambda match: replacements[match.group(0)], template)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(rendered)
+    except FileExistsError:
+        print(f"refusing to overwrite existing path: {display_path(root, target)}", file=sys.stderr); return 2
+    except OSError as exc:
+        print(f"failed to create {display_path(root, target)}: {exc}", file=sys.stderr); return 2
+    print(f"Created {display_path(root, target)}"); return 0
+
+
 def cmd_tree(args):
     root = kb_root(args); target = root / args.path
     if not target.exists(): print(f"Path not found: {args.path}", file=sys.stderr); return 2
@@ -462,6 +545,12 @@ def build_parser():
     parser = argparse.ArgumentParser(description="Operate a kb-core@2 local Markdown knowledge base.")
     parser.add_argument("--kb", default="."); sub = parser.add_subparsers(dest="command", required=True)
     init = sub.add_parser("init"); init.set_defaults(func=cmd_init)
+    new = sub.add_parser("new", help="Create an entry from the package template.")
+    new_kind = new.add_subparsers(dest="kind", required=True)
+    new_info = new_kind.add_parser("info")
+    new_info.add_argument("path"); new_info.add_argument("--title", required=True); new_info.add_argument("--source", action="append", required=True); new_info.add_argument("--status", choices=ALLOWED_STATUS, default="draft"); new_info.set_defaults(func=cmd_new)
+    new_knowledge = new_kind.add_parser("knowledge")
+    new_knowledge.add_argument("path"); new_knowledge.add_argument("--title", required=True); new_knowledge.add_argument("--depends-on", action="append", required=True); new_knowledge.add_argument("--status", choices=ALLOWED_STATUS, default="draft"); new_knowledge.set_defaults(func=cmd_new)
     schema = sub.add_parser("schema", help="Show the merged metadata contract."); schema.add_argument("--json", action="store_true"); schema.set_defaults(func=cmd_schema)
     list_cmd = sub.add_parser("list"); list_cmd.add_argument("kind", nargs="?", choices=("info", "knowledge")); list_cmd.add_argument("--filter", action="append", default=[]); list_cmd.add_argument("--status"); list_cmd.add_argument("--quiet", action="store_true"); list_cmd.set_defaults(func=cmd_list)
     search = sub.add_parser("search"); search.add_argument("query", nargs="?"); search.add_argument("--kind", choices=("info", "knowledge")); search.add_argument("--filter", action="append", default=[]); search.add_argument("--all", dest="all_terms", action="append", default=[]); search.add_argument("--any", dest="any_terms", action="append", default=[]); search.set_defaults(func=cmd_search)

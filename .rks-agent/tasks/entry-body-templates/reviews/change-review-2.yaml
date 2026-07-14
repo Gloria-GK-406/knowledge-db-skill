@@ -1,0 +1,10 @@
+verdict: changes-required
+challenge_dispositions: []
+blocking_findings:
+  - path: skills/knowledge-db-maintain/scripts/kb.py
+    lines: 512-524
+    finding: Sequential global replacement recursively expands placeholder-like text in user values.
+non_blocking_findings:
+  - path: skills/knowledge-db-maintain/scripts/kb.py
+    lines: 502-527
+    finding: File creation should use exclusive mode to close the concurrent overwrite window.
