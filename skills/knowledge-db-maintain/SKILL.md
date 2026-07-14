@@ -7,6 +7,18 @@ description: Use when maintaining a kb-core@2 local Markdown knowledge base with
 
 Use this skill to change a local knowledge base that contains `source/`, `info/`, `knowledge/`, and `kb-package-schema.json`. Keep its grounding chain strict: `knowledge -> info -> source`.
 
+## Three-Layer Meaning
+
+Keep the three layers semantically distinct, not merely linked by frontmatter:
+
+| Layer | Store | Do not store |
+| --- | --- | --- |
+| `source/` | Original, attributable material: web pages, papers, API references, source-file excerpts, logs, transcripts, datasets, or other primary evidence. Preserve enough context to re-check it. | Extracted conclusions or implementation advice. |
+| `info/` | Objective facts extracted from one or more source entries: what an API does, signature and parameters, preconditions, return values, side effects, limits, and version-specific observations. Cite every supporting source. | Raw source dumps, recommendations, workflows, or unsupported generalizations. |
+| `knowledge/` | Reusable guidance derived from info entries: how to combine APIs to implement a feature, recommended execution routes, decision criteria, tradeoffs, and operational constraints. Declare every dependency with `depends_on`. | New facts without info support, raw evidence, or a restatement of API reference material. |
+
+Write in this order: add or update `source` first, extract only supported facts into `info`, then create or revise `knowledge` only when the info supports a reusable conclusion. Do not create knowledge merely because a source or info entry changed. Keep unresolved questions and planned experiments out of knowledge until evidence supports a conclusion.
+
 ## V2 Package Contract
 
 Every package extends `kb-core@2` in its root `kb-package-schema.json`. Core frontmatter fields are `schema`, `kind`, `title`, `status`, and `updated`; `info` also requires `source`, while `knowledge` requires `depends_on`. Package-specific values may appear only under the nested `metadata` mapping.
