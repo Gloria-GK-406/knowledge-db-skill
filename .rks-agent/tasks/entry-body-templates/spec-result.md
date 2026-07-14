@@ -43,7 +43,7 @@ terminal_stage: verification
 ## Repository State
 
 - Changed paths: `knowledge-db-maintain` documentation, CLI, templates, package checker/catalog tests, repository fixtures/tests, registration metadata, and task artifacts.
-- Baseline or checkpoint: `0073a1c7d427deeea4c32f646ab41809750c6536` with uncommitted verified changes on `codex/entry-body-templates`.
+- Baseline or checkpoint: implementation commit `c6d46a6` was fast-forward integrated into `main`.
 - Parent rollback required: `no`
 
 ## Successor Guidance
@@ -61,7 +61,7 @@ terminal_stage: verification
 
 ## Unresolved Items
 
-- Git integration choice remains with the user; no commit, push, merge, or PR was authorized.
+- None.
 
 ## Artifacts
 
@@ -71,3 +71,10 @@ terminal_stage: verification
 - `reviews/change-review-2.yaml`
 - `reviews/change-review-3.yaml`
 - `verification/completion.yaml`
+
+## Closeout
+
+- Final branch: `main`.
+- Feature worktree and branch: removed after successful fast-forward integration.
+- Post-merge verification: repository suite passed 28 tests; package skeleton suite passed 8 tests; skill validation passed.
+- Push disposition: authorized by the user and pending at the time of this evidence refresh.
