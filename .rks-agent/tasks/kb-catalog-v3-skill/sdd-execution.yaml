@@ -1,0 +1,12 @@
+schema_version: "0.5"
+kind: rks-sdd-execution
+status: { stage: complete, state: completed }
+task: { contract: ./TaskContract.md, contract_revision: 1 }
+routing: { workflow: single-spec-workflow, skeleton: sdd-standard, profile: code-feature, selection_mode: recommended, execution_mode: auto, overrides: [] }
+artifacts: { spec: ./spec.md, plan: ./plan.md, reviews: ./reviews/, verification: ./verification/, result: ./spec-result.md }
+stages:
+  - { id: spec, focus: [task.contract], produces: [spec], skills: [writing-specs], gate: none, completion: "spec covers the TaskContract" }
+  - { id: plan, focus: [artifacts.spec], produces: [plan], skills: [writing-plans], gate: none, completion: "plan covers the feature spec and verification" }
+  - { id: implementation, focus: [artifacts.plan], produces: [implementation], skills: [executing-tasks, test-driven-development], gate: auto, completion: "planned feature and required tests are complete" }
+  - { id: review, focus: [task.contract, artifacts.spec, artifacts.plan], produces: [change-review], skills: [reviewing-code], gate: auto, completion: "complete change is approved with no unresolved blocking findings" }
+  - { id: verification, focus: [task.contract, artifacts.reviews], produces: [completion-evidence], skills: [verification-before-completion], gate: auto, completion: "fresh evidence proves every TaskContract success condition" }

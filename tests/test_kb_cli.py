@@ -13,6 +13,7 @@ KB = ROOT / "skills" / "knowledge-db-maintain" / "scripts" / "kb.py"
 FIXTURE = ROOT / "tests" / "fixtures" / "metadata-schema-v2"
 SKELETON = ROOT / "skills" / "knowledge-db-maintain" / "assets" / "package-skeleton"
 SKELETON_ASSETS = (
+    "kb-package.json",
     "kb-package-schema.json",
     "source/.gitkeep",
     "info/.gitkeep",
@@ -98,6 +99,16 @@ class KbCliV2Tests(unittest.TestCase):
         for name in ("source", "info", "knowledge"):
             (root / name).mkdir()
         (root / "kb-package-schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
+        (root / "kb-package.json").write_text(
+            json.dumps(
+                {
+                    "schema": "kb-package@1",
+                    "name": "Test knowledge base",
+                    "description": "A local package used by CLI tests.",
+                }
+            ),
+            encoding="utf-8",
+        )
         (root / "source" / "official.md").write_text("official", encoding="utf-8")
         copytree(SKELETON / "scripts", root / "scripts")
 
@@ -119,6 +130,10 @@ class KbCliV2Tests(unittest.TestCase):
                 self.assertTrue(path.is_file(), asset)
                 self.assertNotIn("s4hana", path.read_text(encoding="utf-8").lower(), asset)
             schema = json.loads((root / "kb-package-schema.json").read_text(encoding="utf-8"))
+            package = json.loads((root / "kb-package.json").read_text(encoding="utf-8"))
+            self.assertEqual("kb-package@1", package["schema"])
+            self.assertTrue(package["name"])
+            self.assertTrue(package["description"])
             self.assertEqual("kb-package-schema@2", schema["schema"])
             self.assertEqual({}, schema["fields"])
             check = subprocess.run(

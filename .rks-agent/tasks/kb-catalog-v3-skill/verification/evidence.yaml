@@ -1,0 +1,14 @@
+decision: pass
+claim: knowledge-db-maintain provides the complete breaking kb-catalog@3 producer contract required by TaskContract revision 1.
+evidence:
+  - condition: SC-1
+    proof: SKILL.md documents kb-package@1, human-facing name/description, kb-catalog@3, and field_value_facets semantics.
+  - condition: SC-2
+    proof: tests/test_kb_cli.py test_init_materializes_the_complete_generic_package_skeleton passed and asserts the generated kb-package.json and all skeleton assets.
+  - condition: SC-3
+    proof: scripts.catalog.test_build_catalog passed, asserting SQLite user_version 3, package name/description, and distinct-entry facet counts.
+  - condition: SC-4
+    proof: producer tests passed for valid v3 artifacts and fail-closed descriptor, v2 catalog declaration, v2 SQLite user_version, and facet-parity cases.
+  - condition: SC-5
+    proof: Fresh command exited 0: python -m unittest scripts.catalog.test_build_catalog scripts.catalog.test_metadata -v (7 tests); python tests/test_kb_cli.py -v (28 tests); git diff --check.
+unverified_conditions: []

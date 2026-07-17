@@ -6,11 +6,11 @@ import sqlite3
 import tempfile
 import unittest
 
-from scripts.catalog.build_catalog import build_catalog
+from scripts.catalog.build_catalog import CatalogBuildError, build_catalog
 
 
 class BuildCatalogTests(unittest.TestCase):
-    def test_builds_a_v2_catalog_from_a_self_contained_package(self) -> None:
+    def test_builds_a_v3_catalog_with_package_identity_and_filter_value_facets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "package"
             out_dir = Path(tmp) / "out"
@@ -18,6 +18,18 @@ class BuildCatalogTests(unittest.TestCase):
             (root / "knowledge").mkdir()
             (root / "source").mkdir()
             (root / "source" / "official.md").write_text("Official source\n", encoding="utf-8")
+            (root / "kb-package.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "kb-package@1",
+                        "name": "Example knowledge base",
+                        "description": "A package used to verify catalog generation.",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             (root / "kb-package-schema.json").write_text(
                 json.dumps(
                     {
@@ -52,6 +64,7 @@ source:
 metadata:
   country:
     - Japan
+    - JP
 ---
 
 # Example
@@ -113,10 +126,10 @@ Reasoning.
             )
 
             self.assertTrue(result["validation"]["ok"])
-            self.assertEqual(result["catalog"]["schema"], "kb-catalog@2")
+            self.assertEqual(result["catalog"]["schema"], "kb-catalog@3")
             connection = sqlite3.connect(out_dir / "catalog.sqlite")
             try:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
                 tables = {
                     row[0]
                     for row in connection.execute(
@@ -134,6 +147,7 @@ Reasoning.
                         "package_schema",
                         "field_definitions",
                         "entry_metadata_values",
+                        "field_value_facets",
                         "metadata_fts",
                     }.issubset(tables)
                 )
@@ -141,7 +155,7 @@ Reasoning.
                     connection.execute(
                         "SELECT normalized_value FROM entry_metadata_values ORDER BY entry_id, position"
                     ).fetchall(),
-                    [("JAPAN",), ("JP",)],
+                    [("JAPAN",), ("JP",), ("JP",)],
                 )
                 self.assertEqual(
                     connection.execute(
@@ -155,8 +169,53 @@ Reasoning.
                     ).fetchone(),
                     ("kb-package-schema@2", "kb-core@2", 64),
                 )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT package_name, name, description, revision FROM packages"
+                    ).fetchone(),
+                    (
+                        "example-package",
+                        "Example knowledge base",
+                        "A package used to verify catalog generation.",
+                        "abc123",
+                    ),
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT field_key, normalized_value, display_value, entry_count "
+                        "FROM field_value_facets ORDER BY field_key, normalized_value"
+                    ).fetchall(),
+                    [("country", "JAPAN", "JAPAN", 1), ("country", "JP", "JP", 2)],
+                )
             finally:
                 connection.close()
+
+    def test_rejects_missing_or_invalid_package_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "package"
+            out_dir = Path(tmp) / "out"
+            root.mkdir()
+            with self.assertRaisesRegex(CatalogBuildError, "missing package descriptor"):
+                build_catalog(
+                    kb_root=root,
+                    package_name="example-package",
+                    revision="abc123",
+                    out_dir=out_dir,
+                )
+
+            (root / "kb-package.json").write_text(
+                json.dumps(
+                    {"schema": "kb-package@1", "name": "Example", "description": ""}
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(CatalogBuildError, "description must be a non-empty string"):
+                build_catalog(
+                    kb_root=root,
+                    package_name="example-package",
+                    revision="abc123",
+                    out_dir=out_dir,
+                )
 
     def test_supports_more_than_ten_values_across_metadata_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,6 +224,16 @@ Reasoning.
             for name in ("source", "info", "knowledge"):
                 (root / name).mkdir(parents=True, exist_ok=True)
             (root / "source" / "official.md").write_text("source\n", encoding="utf-8")
+            (root / "kb-package.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "kb-package@1",
+                        "name": "Example knowledge base",
+                        "description": "A package used to verify catalog generation.",
+                    }
+                ),
+                encoding="utf-8",
+            )
             (root / "kb-package-schema.json").write_text(
                 json.dumps(
                     {

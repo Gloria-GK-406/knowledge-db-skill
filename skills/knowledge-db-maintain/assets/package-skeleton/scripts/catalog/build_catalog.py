@@ -1,4 +1,4 @@
-"""Build a kb-catalog@2 SQLite artifact from this package alone."""
+"""Build a kb-catalog@3 SQLite artifact from this package alone."""
 
 from __future__ import annotations
 
@@ -136,6 +136,27 @@ def _load_schema(kb_root: Path) -> tuple[dict[str, dict[str, Any]], str, str]:
     return fields, canonical_json, hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
+def _load_package_metadata(kb_root: Path) -> dict[str, str]:
+    path = kb_root / "kb-package.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise CatalogBuildError(f"missing package descriptor: {path}") from error
+    except json.JSONDecodeError as error:
+        raise CatalogBuildError(f"invalid package descriptor JSON: {error.msg}") from error
+    if not isinstance(raw, dict) or set(raw) != {"schema", "name", "description"}:
+        raise CatalogBuildError("package descriptor must contain only schema, name, and description")
+    if raw.get("schema") != "kb-package@1":
+        raise CatalogBuildError("package descriptor must declare schema kb-package@1")
+    metadata: dict[str, str] = {}
+    for key in ("name", "description"):
+        value = raw.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise CatalogBuildError(f"package descriptor {key} must be a non-empty string")
+        metadata[key] = value.strip()
+    return metadata
+
+
 def _parse_entry(path: Path, kb_root: Path, fields: dict[str, dict[str, Any]], package_name: str, revision: str) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
@@ -264,7 +285,8 @@ def _validate_body_contract(path: Path, kind: str, title: str, body: str) -> Non
         raise CatalogBuildError(f"{path}: canonical {kind} sections must be exactly, in order: {', '.join(expected)}")
 
 
-def _validate_package(kb_root: Path, package_name: str, revision: str) -> tuple[dict[str, dict[str, Any]], str, str, list[dict[str, Any]], list[dict[str, str]]]:
+def _validate_package(kb_root: Path, package_name: str, revision: str) -> tuple[dict[str, str], dict[str, dict[str, Any]], str, str, list[dict[str, Any]], list[dict[str, str]]]:
+    package_metadata = _load_package_metadata(kb_root)
     fields, schema_json, schema_sha256 = _load_schema(kb_root)
     entries: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -294,15 +316,15 @@ def _validate_package(kb_root: Path, package_name: str, revision: str) -> tuple[
             invalid = sorted(name for name in child_names if name != "shared" and not ISO_COUNTRY_DIRECTORY.fullmatch(name))
             if invalid:
                 errors.append({"phase": "structure", "filePath": version.relative_to(kb_root).as_posix(), "field": "layout", "code": "INVALID_VERSION_LAYOUT", "message": f"{version}: version directories may contain only shared/ or country-code directories; found {', '.join(invalid)}"})
-    return fields, schema_json, schema_sha256, entries, errors
+    return package_metadata, fields, schema_json, schema_sha256, entries, errors
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
         PRAGMA foreign_keys = ON;
-        PRAGMA user_version = 2;
-        CREATE TABLE packages (package_name TEXT PRIMARY KEY, revision TEXT NOT NULL);
+        PRAGMA user_version = 3;
+        CREATE TABLE packages (package_name TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, revision TEXT NOT NULL);
         CREATE TABLE entries (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES packages(package_name) ON DELETE CASCADE, entry_path TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('info', 'knowledge')), title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'deprecated', 'rejected')), updated TEXT NOT NULL, body TEXT NOT NULL, UNIQUE (package_name, entry_path));
         CREATE TABLE entry_lines (entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE, line_number INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (entry_id, line_number));
         CREATE TABLE info_sources (entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE, position INTEGER NOT NULL, source TEXT NOT NULL, PRIMARY KEY (entry_id, position));
@@ -312,13 +334,15 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         CREATE TABLE field_definitions (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES package_schema(package_name) ON DELETE CASCADE, field_key TEXT NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('core', 'package')), field_type TEXT NOT NULL, multiple INTEGER NOT NULL CHECK (multiple IN (0, 1)), required_for_json TEXT NOT NULL CHECK (json_valid(required_for_json)), description TEXT NOT NULL, filterable INTEGER NOT NULL CHECK (filterable IN (0, 1)), search_enabled INTEGER NOT NULL CHECK (search_enabled IN (0, 1)), search_weight INTEGER, normalization TEXT NOT NULL, aliases_json TEXT NOT NULL CHECK (json_valid(aliases_json)), UNIQUE (package_name, field_key));
         CREATE TABLE entry_metadata_values (entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE, field_definition_id INTEGER NOT NULL REFERENCES field_definitions(id) ON DELETE CASCADE, field_key TEXT NOT NULL, position INTEGER NOT NULL, normalized_value TEXT NOT NULL, display_value TEXT NOT NULL, PRIMARY KEY (entry_id, field_definition_id, position));
         CREATE INDEX entry_metadata_values_filter_idx ON entry_metadata_values(field_key, normalized_value, entry_id);
+        CREATE TABLE field_value_facets (package_name TEXT NOT NULL REFERENCES packages(package_name) ON DELETE CASCADE, field_key TEXT NOT NULL, normalized_value TEXT NOT NULL, display_value TEXT NOT NULL, entry_count INTEGER NOT NULL CHECK (entry_count > 0), PRIMARY KEY (package_name, field_key, normalized_value));
+        CREATE INDEX field_value_facets_page_idx ON field_value_facets(package_name, field_key, normalized_value);
         CREATE VIRTUAL TABLE metadata_fts USING fts5(field_key, value_text, tokenize = 'unicode61 remove_diacritics 2');
         """
     )
 
 
-def _load_catalog(connection: sqlite3.Connection, package_name: str, revision: str, fields: dict[str, dict[str, Any]], schema_json: str, schema_sha256: str, entries: list[dict[str, Any]]) -> None:
-    connection.execute("INSERT INTO packages (package_name, revision) VALUES (?, ?)", (package_name, revision))
+def _load_catalog(connection: sqlite3.Connection, package_name: str, package_metadata: dict[str, str], revision: str, fields: dict[str, dict[str, Any]], schema_json: str, schema_sha256: str, entries: list[dict[str, Any]]) -> None:
+    connection.execute("INSERT INTO packages (package_name, name, description, revision) VALUES (?, ?, ?, ?)", (package_name, package_metadata["name"], package_metadata["description"], revision))
     connection.execute("INSERT INTO package_schema (package_name, schema_id, extends_id, schema_sha256, schema_json) VALUES (?, 'kb-package-schema@2', 'kb-core@2', ?, ?)", (package_name, schema_sha256, schema_json))
     field_ids: dict[str, int] = {}
     definitions = {
@@ -363,6 +387,15 @@ def _load_catalog(connection: sqlite3.Connection, package_name: str, revision: s
     for entry in entries:
         for position, dependency in enumerate(entry["depends_on"]):
             connection.execute("INSERT INTO knowledge_dependencies (entry_id, position, depends_on_entry_id) VALUES (?, ?, ?)", (entry_ids[entry["entry_path"]], position, entry_ids[dependency]))
+    connection.execute(
+        "INSERT INTO field_value_facets (package_name, field_key, normalized_value, display_value, entry_count) "
+        "SELECT ?, values_table.field_key, values_table.normalized_value, MIN(values_table.display_value), COUNT(DISTINCT values_table.entry_id) "
+        "FROM entry_metadata_values AS values_table "
+        "JOIN field_definitions AS definitions ON definitions.id = values_table.field_definition_id "
+        "WHERE definitions.package_name = ? AND definitions.filterable = 1 "
+        "GROUP BY values_table.field_key, values_table.normalized_value",
+        (package_name, package_name),
+    )
 
 
 def build_catalog(*, kb_root: Path, package_name: str, revision: str, out_dir: Path) -> dict[str, Any]:
@@ -370,17 +403,17 @@ def build_catalog(*, kb_root: Path, package_name: str, revision: str, out_dir: P
     out_dir.mkdir(parents=True, exist_ok=True)
     catalog_path = out_dir / "catalog.sqlite"
     catalog_path.unlink(missing_ok=True)
-    fields, schema_json, schema_sha256, entries, errors = _validate_package(kb_root, package_name, revision)
+    package_metadata, fields, schema_json, schema_sha256, entries, errors = _validate_package(kb_root, package_name, revision)
     validation = {"ok": not errors, "errorCount": len(errors), "warningCount": 0, "entryCount": len(entries)}
     report = {"ok": not errors, "packageName": package_name, "revision": revision, "errors": errors, "warnings": []}
     (out_dir / "validation-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if errors:
-        (out_dir / "builder-metadata.json").write_text(json.dumps({"generator": {"name": "knowledge-package-catalog-builder", "version": "2"}, "validation": validation}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (out_dir / "builder-metadata.json").write_text(json.dumps({"generator": {"name": "knowledge-package-catalog-builder", "version": "3"}, "validation": validation}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return {"validation": validation}
     connection = sqlite3.connect(catalog_path)
     try:
         _create_schema(connection)
-        _load_catalog(connection, package_name, revision, fields, schema_json, schema_sha256, entries)
+        _load_catalog(connection, package_name, package_metadata, revision, fields, schema_json, schema_sha256, entries)
         foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_errors:
             raise CatalogBuildError("catalog foreign-key check failed")
@@ -390,8 +423,8 @@ def build_catalog(*, kb_root: Path, package_name: str, revision: str, out_dir: P
         catalog_path.unlink(missing_ok=True)
         raise
     connection.close()
-    catalog = {"schema": "kb-catalog@2", "schemaSha256": schema_sha256}
-    (out_dir / "builder-metadata.json").write_text(json.dumps({"generator": {"name": "knowledge-package-catalog-builder", "version": "2"}, "validation": validation, "catalog": catalog}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    catalog = {"schema": "kb-catalog@3", "schemaSha256": schema_sha256}
+    (out_dir / "builder-metadata.json").write_text(json.dumps({"generator": {"name": "knowledge-package-catalog-builder", "version": "3"}, "validation": validation, "catalog": catalog}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"catalogPath": str(catalog_path), "validation": validation, "catalog": catalog}
 
 

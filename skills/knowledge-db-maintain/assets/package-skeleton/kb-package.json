@@ -1,0 +1,5 @@
+{
+  "schema": "kb-package@1",
+  "name": "Knowledge package name",
+  "description": "Describe the scope and intended use of this knowledge package."
+}

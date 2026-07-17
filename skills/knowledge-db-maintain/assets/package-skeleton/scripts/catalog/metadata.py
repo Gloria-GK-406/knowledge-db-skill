@@ -74,14 +74,14 @@ def write_artifact_metadata(
     catalog_metadata = builder_metadata.get("catalog")
     if not isinstance(catalog_metadata, dict):
         raise ValueError("builder metadata must declare catalog metadata")
-    if catalog_metadata.get("schema") != "kb-catalog@2":
-        raise ValueError("builder metadata must declare kb-catalog@2")
+    if catalog_metadata.get("schema") != "kb-catalog@3":
+        raise ValueError("builder metadata must declare kb-catalog@3")
     schema_sha256 = catalog_metadata.get("schemaSha256")
     if not isinstance(schema_sha256, str) or len(schema_sha256) != 64:
         raise ValueError("builder metadata must declare a 64-character catalog schema hash")
 
     manifest = {
-        "schema": "kb-catalog-artifact@2",
+        "schema": "kb-catalog-artifact@3",
         "sourceRepo": source_repo,
         "sourceRevision": source_revision,
         "sourceRef": source_ref,
@@ -89,7 +89,7 @@ def write_artifact_metadata(
         "packageName": package_name,
         "generator": generator,
         "catalog": {
-            "schema": "kb-catalog@2",
+            "schema": "kb-catalog@3",
             "schemaSha256": schema_sha256,
             "path": "catalog.sqlite.gz",
             "sha256": sha256_file(catalog_gz),
@@ -117,7 +117,7 @@ def write_artifact_metadata(
     }
     manifest_key = f"{object_prefix.rstrip('/')}/manifest.json"
     latest = {
-        "schema": "kb-catalog-latest@2",
+        "schema": "kb-catalog-latest@3",
         "sourceRepo": source_repo,
         "sourceRef": source_ref,
         "sourceRevision": source_revision,

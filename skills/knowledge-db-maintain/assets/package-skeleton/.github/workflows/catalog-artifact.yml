@@ -68,6 +68,7 @@ jobs:
             --require-table package_schema \
             --require-table field_definitions \
             --require-table entry_metadata_values \
+            --require-table field_value_facets \
             --require-table metadata_fts \
             --out "$OUT_DIR/smoke.json"
 

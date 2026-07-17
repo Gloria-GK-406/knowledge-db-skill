@@ -18,7 +18,7 @@ def check_package(kb_root: Path) -> int:
         print(f"missing required source directory: {kb_root / 'source'}", file=sys.stderr)
         return 2
     try:
-        _, _, _, _, errors = _validate_package(
+        _, _, _, _, _, errors = _validate_package(
             kb_root,
             package_name=kb_root.name,
             revision="validation",

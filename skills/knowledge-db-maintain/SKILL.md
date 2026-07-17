@@ -5,7 +5,7 @@ description: Use when creating or maintaining a kb-core@2 local Markdown knowled
 
 # Knowledge DB Maintain
 
-Use this skill to change a local knowledge base that contains `source/`, `info/`, `knowledge/`, and `kb-package-schema.json`. Keep its grounding chain strict: `knowledge -> info -> source`.
+Use this skill to change a local knowledge base that contains `source/`, `info/`, `knowledge/`, `kb-package.json`, and `kb-package-schema.json`. Keep its grounding chain strict: `knowledge -> info -> source`.
 
 ## Three-Layer Meaning
 
@@ -58,7 +58,19 @@ Write every `knowledge` body as:
 
 Do not introduce new facts in `knowledge`; put supporting facts in `info` first. The generated package checker rejects missing, duplicated, additional, or reordered H1/H2 headings.
 
-## V2 Package Contract
+## Package and Entry Contract
+
+Every package must declare its human-facing identity in root `kb-package.json`. `name` and
+`description` are required non-empty strings and are what a catalog consumer shows to users;
+the repository/package identifier remains the stable technical `package_name`.
+
+```json
+{
+  "schema": "kb-package@1",
+  "name": "SAP BTP Knowledge Base",
+  "description": "Implementation guidance and verified facts for SAP BTP."
+}
+```
 
 Every package extends `kb-core@2` in its root `kb-package-schema.json`. Core frontmatter fields are `schema`, `kind`, `title`, `status`, and `updated`; `info` also requires `source`, while `knowledge` requires `depends_on`. Package-specific values may appear only under the nested `metadata` mapping.
 
@@ -138,6 +150,9 @@ workflow. It also creates `templates/info.md` and `templates/knowledge.md`; use 
 render them with core frontmatter and the canonical body structure. It is safe to rerun only
 while generated assets remain byte-identical; it refuses
 to overwrite changed files or directory collisions. The generated Python producer validates
-the package and builds `kb-catalog@2` SQLite locally; its CI needs only package-local scripts,
+the package and builds `kb-catalog@3` SQLite locally; its CI needs only package-local scripts,
 PyYAML, and the repository's MinIO publication secrets. It never checks out or imports a
-query service. A service consumes the published artifact and validates its generic v2 contract.
+query service. The v3 catalog stores the package identity plus `field_value_facets`, computed
+from declared `filterable` metadata values while the catalog is built. Consumers can therefore
+enumerate legal filter values without a second Markdown scan. A service consumes only the
+published v3 artifact and validates its generic v3 contract.
