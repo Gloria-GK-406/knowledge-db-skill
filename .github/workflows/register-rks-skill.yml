@@ -61,7 +61,7 @@ jobs:
 
           def frontmatter_fields(skill_path: Path) -> dict[str, str]:
               content = skill_path.read_text(encoding='utf-8')
-              match = re.match(r'^---\\s*\\n(.*?)\\n---\\s*\\n', content, re.DOTALL)
+              match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
               if not match:
                   raise ValueError(f'{skill_path} has no YAML frontmatter')
               fields = {}
