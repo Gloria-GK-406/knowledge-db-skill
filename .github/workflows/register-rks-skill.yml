@@ -6,6 +6,7 @@ on:
     paths:
       - .rks-skill-registration.json
       - .github/workflows/register-rks-skill.yml
+      - skills/**
   workflow_dispatch:
     inputs:
       operation:
@@ -51,11 +52,45 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           from pathlib import Path
 
           manifest = json.loads(Path('.rks-skill-registration.json').read_text(encoding='utf-8'))
           group = manifest['group']
           group_id = group['id']
+
+          def frontmatter_fields(skill_path: Path) -> dict[str, str]:
+              content = skill_path.read_text(encoding='utf-8')
+              match = re.match(r'^---\\s*\\n(.*?)\\n---\\s*\\n', content, re.DOTALL)
+              if not match:
+                  raise ValueError(f'{skill_path} has no YAML frontmatter')
+              fields = {}
+              for line in match.group(1).splitlines():
+                  key, separator, value = line.partition(':')
+                  if separator:
+                      fields[key.strip()] = value.strip()
+              return fields
+
+          published_ids = {item['id'] for item in manifest['skills']}
+          declared_skills = {item['id']: item for item in manifest['skills']}
+          published_skills = {}
+          for skill_path in Path('skills').glob('*/SKILL.md'):
+              fields = frontmatter_fields(skill_path)
+              skill_id = fields.get('name')
+              if skill_id in published_ids:
+                  description = fields.get('description')
+                  if not description:
+                      raise ValueError(f'{skill_path} has no frontmatter description')
+                  published_skills[skill_id] = {
+                      'id': skill_id,
+                      'name': declared_skills[skill_id]['name'],
+                      'description': description,
+                  }
+
+          missing_skills = published_ids - published_skills.keys()
+          if missing_skills:
+              raise ValueError(f'Manifest skills have no matching SKILL.md name: {sorted(missing_skills)}')
+
           root = Path('registry/skills/skill-search-install/references')
           detail_directory = root / 'skills'
           list_path = root / 'list.json'
@@ -79,7 +114,7 @@ jobs:
                   'name': group['name'],
                   'description': group['description'],
                   'repository': os.environ['GITHUB_REPOSITORY'],
-                  'skills': manifest['skills'],
+                  'skills': [published_skills[item['id']] for item in manifest['skills']],
               }
               detail_path.write_text(json.dumps(detail, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
